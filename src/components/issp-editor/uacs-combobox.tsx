@@ -17,9 +17,39 @@ export interface UacsEntry {
 
 type ContextFilter = "co" | "mooe" | "all";
 
+/**
+ * Searchable UACS code picker for Part IV budget line items.
+ *
+ * - Fetches `uacs_active.min.json` (1,225 active codes) lazily on first open.
+ * - Uses a module-level singleton so all instances share one fetch.
+ * - Renders the dropdown via `createPortal` into `document.body` to avoid
+ *   `overflow:hidden` clipping inside table cells.
+ * - Eager-fetches when `value` is pre-filled (e.g. doc loaded from file) so the
+ *   label resolves without opening the dropdown.
+ *
+ * **basePath gotcha:** The JSON fetch always prefixes
+ * `process.env.NEXT_PUBLIC_BASE_PATH ?? ""` — do not hardcode `/uacs_active.min.json`.
+ *
+ * @example
+ * ```tsx
+ * <UacsCombobox
+ *   value={item.uacsCode}
+ *   onChange={(uacs, label) => updateItem({ uacsCode: uacs, uacsLabel: label })}
+ *   context="co"    // "co" | "mooe" | "all"
+ * />
+ * ```
+ */
 interface UacsComboboxProps {
+  /** Currently selected UACS code string (e.g. `"50604990"`). Empty string = none selected. */
   value: string;
+  /** Called when user selects a code. Receives the UACS code and its label. */
   onChange: (uacs: string, label: string) => void;
+  /**
+   * Restricts the visible codes:
+   * - `"co"` — Capital Outlay (codes starting with `506`)
+   * - `"mooe"` — MOOE (codes starting with `502`, `5021`, `5029`)
+   * - `"all"` — no filter (default)
+   */
   context?: ContextFilter;
   placeholder?: string;
   className?: string;

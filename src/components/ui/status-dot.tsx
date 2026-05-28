@@ -1,8 +1,21 @@
 import { cn } from "@/lib/utils";
 import type { SectionStatus } from "@/lib/store";
 
+/**
+ * A small colored dot indicating the completion status of an ISSP section.
+ *
+ * | status        | color  | meaning                    |
+ * |---------------|--------|----------------------------|
+ * | `"empty"`     | gray   | Section not yet touched    |
+ * | `"in_progress"` | amber | Section has content but not marked done |
+ * | `"done"`      | green  | User has marked section done |
+ *
+ * Used in `EditorSidebar` nav items and `PartCard` section lists.
+ * Status is derived from `SectionMeta` via `computeStatus()` in `src/lib/sections.ts`.
+ */
 interface StatusDotProps {
   status: SectionStatus;
+  /** Dot diameter in px. Default: 7 */
   size?: number;
   className?: string;
 }
