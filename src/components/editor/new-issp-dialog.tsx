@@ -73,7 +73,7 @@ export function NewIsspDialog({
           <DialogTitle>New ISSP</DialogTitle>
         </DialogHeader>
 
-        <IsspFormFields form={form} set={set} idPrefix="new-" />
+        <IsspFormFields form={form} set={set} endYear={endYear} idPrefix="new-" />
 
         {isValid && (
           <div className="rounded-lg bg-muted/50 px-4 py-3 text-xs text-muted-foreground space-y-0.5">

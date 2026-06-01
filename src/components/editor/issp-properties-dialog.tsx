@@ -87,10 +87,13 @@ export const BLANK_FORM: IsspForm = {
 export function IsspFormFields({
   form,
   set,
+  endYear,
   idPrefix = "",
 }: {
   form: IsspForm;
   set: <K extends keyof IsspForm>(key: K, value: IsspForm[K]) => void;
+  /** End year of the coverage period. Variable to support 3- or 5-year ISSP cycles. */
+  endYear: number;
   idPrefix?: string;
 }) {
   const id = (name: string) => `${idPrefix}${name}`;
@@ -180,11 +183,11 @@ export function IsspFormFields({
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5">
             <Label>Start Year</Label>
-            <Input value={ISSP_START_YEAR} readOnly className="bg-muted cursor-not-allowed" />
+            <Input value={form.startYear} readOnly className="bg-muted cursor-not-allowed" />
           </div>
           <div className="space-y-1.5">
             <Label>End Year</Label>
-            <Input value={ISSP_END_YEAR} readOnly className="bg-muted cursor-not-allowed" />
+            <Input value={endYear} readOnly className="bg-muted cursor-not-allowed" />
           </div>
         </div>
         <p className="text-xs text-muted-foreground mt-2">
@@ -315,7 +318,7 @@ export function IsspPropertiesDialog({
           <DialogTitle>ISSP Properties</DialogTitle>
         </DialogHeader>
 
-        <IsspFormFields form={form} set={set} idPrefix="props-" />
+        <IsspFormFields form={form} set={set} endYear={endYear} idPrefix="props-" />
 
         <div className="rounded-lg bg-muted/50 px-4 py-3 text-xs text-muted-foreground space-y-0.5">
           <p className="font-medium text-foreground text-sm leading-snug">{title}</p>
