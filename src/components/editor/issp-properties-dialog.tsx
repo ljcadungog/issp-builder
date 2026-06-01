@@ -87,12 +87,10 @@ export const BLANK_FORM: IsspForm = {
 export function IsspFormFields({
   form,
   set,
-  endYear,
   idPrefix = "",
 }: {
   form: IsspForm;
   set: <K extends keyof IsspForm>(key: K, value: IsspForm[K]) => void;
-  endYear: number;
   idPrefix?: string;
 }) {
   const id = (name: string) => `${idPrefix}${name}`;
@@ -317,7 +315,7 @@ export function IsspPropertiesDialog({
           <DialogTitle>ISSP Properties</DialogTitle>
         </DialogHeader>
 
-        <IsspFormFields form={form} set={set} endYear={endYear} idPrefix="props-" />
+        <IsspFormFields form={form} set={set} idPrefix="props-" />
 
         <div className="rounded-lg bg-muted/50 px-4 py-3 text-xs text-muted-foreground space-y-0.5">
           <p className="font-medium text-foreground text-sm leading-snug">{title}</p>
