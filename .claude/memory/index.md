@@ -64,3 +64,4 @@ Next planned work:
 | `public/demo/ncwtr-issp-2026-2028.issp` | Demo file; all 4 parts populated |
 | `docs/project-status.md` | Full feature/bug history |
 | `docs/session-handoff.md` | Deep architectural reference |
+| `docs/dev-workflow.md` | Verify-locally → PR → squash-merge runbook (Node 22, CI gates, gotchas) |

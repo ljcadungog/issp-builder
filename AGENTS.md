@@ -70,6 +70,16 @@ Session context is stored in `.claude/memory/`. Read these files at the start of
 4. For fonts: confirm `fonts-urw-base35` is installed on the server.
 5. Run the export locally with `npm run dev` and POST to `http://localhost:3000/api/export`.
 
+## Verify locally and open a PR
+
+See `docs/dev-workflow.md` for the full runbook. Gate order before any PR:
+
+1. **Node ≥ 20.19 / 22 LTS** active (`nvm use` honors `.nvmrc`; Prisma 7 needs it).
+2. `npx prisma generate` → `npx tsc --noEmit` → `npm run lint` → `npm test` → `npm run build` — all green (lint must be **0 errors**; build mirrors CI with `NEXT_PUBLIC_BASE_PATH=""`).
+3. Commit on a **feature branch** (never `main`); stage files explicitly.
+4. Open the PR against **`origin`** `main` (no `gh` CLI — use the GitHub REST API; token needs `Pull requests: write`). PR body = human prose + a ```yaml manifest.
+5. **Squash and merge** — the PR body becomes the single commit message.
+
 ## Deploy to production
 
 See `.claude/memory/deployment.md` for the full checklist. Critical reminders:
