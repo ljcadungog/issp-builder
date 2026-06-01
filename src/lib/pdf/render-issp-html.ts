@@ -135,7 +135,7 @@ interface Part3 {
   performanceFramework: Record<string, { projectTitle: string; projectType: string; rows: KpiRow[] }>;
 }
 
-interface LineItem {
+export interface LineItem {
   id: string; item: string; office: string;
   uacsCode: string; uacsLabel: string;
   fundSource: string; qty: number; unitCost: number;
@@ -183,21 +183,21 @@ function nl2br(s: string | null | undefined): string {
   return esc(s).replace(/\n/g, "<br>");
 }
 
-function php(n: number): string {
+export function php(n: number): string {
   return new Intl.NumberFormat("en-PH", {
     style: "currency", currency: "PHP", minimumFractionDigits: 2,
   }).format(n);
 }
 
-function total(l: LineItem) { return l.qty * l.unitCost; }
-function sumLines(lines: LineItem[]) { return lines.reduce((s, l) => s + total(l), 0); }
+export function total(l: LineItem) { return l.qty * l.unitCost; }
+export function sumLines(lines: LineItem[]) { return lines.reduce((s, l) => s + total(l), 0); }
 
 function chk(v: boolean | undefined): string {
   return v ? "☑" : "☐";
 }
 
 
-function ooLabel(agencyType: string): string {
+export function ooLabel(agencyType: string): string {
   if (agencyType === "GOCC") return "Strategic Objectives (SO)";
   if (agencyType === "LGU") return "Major Final Outputs (MFO)";
   return "Organizational Outcomes (OO)";

@@ -9,7 +9,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { IsspDocument, Part1Data, Part2Data, Part3Data, Part4Data, SectionMeta, HumanCapital, CyberControls, EgpChecklist, YearBudget, HCRow } from "./types";
+import type { IsspDocument, Part1Data, Part2Data, Part3Data, Part4Data, SectionMeta, HumanCapital, CyberControls, EgpChecklist, YearBudget, HCRow, StakeholderService } from "./types";
 import { createEmptyDocument, type NewDocOptions } from "./defaults";
 import { idbClear, idbLoad, idbSave } from "./idb";
 
@@ -123,13 +123,12 @@ const genId = () => Math.random().toString(36).slice(2, 10);
 
 function migrateLegacyDoc(doc: IsspDocument): IsspDocument {
   // v1 → v2: planStatus, submissionTarget, sectionMeta
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let base: IsspDocument = (doc.schemaVersion ?? 1) >= 2 ? doc : {
     ...doc,
     schemaVersion: 2,
-    planStatus: (doc as any).planStatus ?? "draft",
-    submissionTarget: (doc as any).submissionTarget ?? { agency: "DICT", deadline: null },
-    sectionMeta: (doc as any).sectionMeta ?? {},
+    planStatus: doc.planStatus ?? "draft",
+    submissionTarget: doc.submissionTarget ?? { agency: "DICT", deadline: null },
+    sectionMeta: doc.sectionMeta ?? {},
   };
 
   // v2 → v3: Stakeholder `transactions`+`complexity` fields → `services` array
@@ -161,7 +160,7 @@ function migrateLegacyDoc(doc: IsspDocument): IsspDocument {
       stakeholders: base.part1.stakeholders.map((s: any) => ({
         ...s,
         id: s.id || genId(),
-        services: (s.services ?? []).map((sv: any) => ({ ...sv, id: sv.id || genId() })),
+        services: (s.services ?? []).map((sv: StakeholderService) => ({ ...sv, id: sv.id || genId() })),
       })),
     },
     part2: {
@@ -405,6 +404,34 @@ export function IsspStoreProvider({ children }: { children: ReactNode }) {
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
+/**
+ * Primary hook for accessing and mutating the current ISSP document.
+ *
+ * Must be called inside `<IsspStoreProvider>` (i.e., within the `/editor` layout).
+ * Throws if used outside the provider.
+ *
+ * **Standard form page pattern:**
+ * ```tsx
+ * const { doc, loading, updatePart1 } = useIsspStore();
+ * if (loading) return null;           // wait for IDB — REQUIRED
+ * if (!doc) redirect("/editor");     // no document loaded
+ * ```
+ *
+ * **Key state fields:**
+ * - `doc` — the full `IsspDocument`, or `null` while loading / no doc
+ * - `loading` — `true` during the initial IndexedDB read; always check before `doc`
+ * - `savedSnapshot` — in-memory clone from last `saveToFile`/`loadFromFile`; `null` on fresh browser load
+ * - `unsavedToFile` — `true` when doc content differs from `savedSnapshot`
+ *
+ * **Mutation methods:**
+ * - `update(patcher)` — general transform; IDB write is debounced 1.5 s
+ * - `updatePart1–4(patch)` — shallow-merge convenience wrappers
+ * - `updateSectionMeta(id, patch)` — update `sectionMeta[id]` safely
+ * - `saveToFile()` — triggers `.issp` download; resets `unsavedToFile`
+ * - `loadFromFile(file)` — parse + migrate + load; returns `{ success, error? }`
+ * - `createNew(opts)` — factory for a blank document
+ * - `clearDoc()` — delete from IDB and reset all state
+ */
 export function useIsspStore(): IsspStoreValue {
   const ctx = useContext(IsspStoreContext);
   if (!ctx) throw new Error("useIsspStore must be used inside <IsspStoreProvider>");
@@ -415,3 +442,7 @@ export function useIsspStore(): IsspStoreValue {
 
 export type { IsspDocument, Part1Data, Part2Data, Part3Data, Part4Data, AgencyType, IsspScope, CyberControls, NetworkDiagram, SectionMeta, SectionStatus } from "./types";
 export type { NewDocOptions } from "./defaults";
+
+// ─── Exported for testing ─────────────────────────────────────────────────────
+
+export { migrateLegacyDoc, docContentHash };

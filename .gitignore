@@ -9,6 +9,12 @@ node_modules
 .next/
 out/
 
+# Test coverage output
+coverage/
+
+# Claude Code local settings (personal, not for repo)
+.claude/settings.local.json
+
 # Prisma generated client
 /src/generated/prisma
 

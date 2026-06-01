@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useState, useCallback, useEffect } from "react";
+import { Fragment, useState, useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -84,13 +84,9 @@ function StakeholderDrawer({ open, stakeholder, isNew, onSave, onDelete, onClose
   const [services, setServices] = useState<StakeholderService[]>(
     () => stakeholder?.services?.length ? stakeholder.services : [makeService()]
   );
-
-  useEffect(() => {
-    if (open) {
-      setName(stakeholder?.name ?? "");
-      setServices(stakeholder?.services?.length ? stakeholder.services : [makeService()]);
-    }
-  }, [open, stakeholder]);
+  // State is seeded from props by the useState initializers above. The parent
+  // remounts this component (via `key={drawer.id}`) whenever a different
+  // stakeholder is opened, so there's no need to sync via an effect.
 
   function addSvc() { setServices((p) => [...p, makeService()]); }
   function removeSvc(id: string) { setServices((p) => p.filter((sv) => sv.id !== id)); }
@@ -779,6 +775,7 @@ export function Part1CForm({ initialData }: Part1CFormProps) {
 
       {/* Drawer — only used in Summary mode */}
       <StakeholderDrawer
+        key={drawer.id ?? "closed"}
         open={drawer.open}
         stakeholder={drawerStakeholder}
         isNew={drawerIsNew}

@@ -92,6 +92,7 @@ export function IsspFormFields({
 }: {
   form: IsspForm;
   set: <K extends keyof IsspForm>(key: K, value: IsspForm[K]) => void;
+  /** End year of the coverage period. Variable to support 3- or 5-year ISSP cycles. */
   endYear: number;
   idPrefix?: string;
 }) {
@@ -182,11 +183,11 @@ export function IsspFormFields({
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5">
             <Label>Start Year</Label>
-            <Input value={ISSP_START_YEAR} readOnly className="bg-muted cursor-not-allowed" />
+            <Input value={form.startYear} readOnly className="bg-muted cursor-not-allowed" />
           </div>
           <div className="space-y-1.5">
             <Label>End Year</Label>
-            <Input value={ISSP_END_YEAR} readOnly className="bg-muted cursor-not-allowed" />
+            <Input value={endYear} readOnly className="bg-muted cursor-not-allowed" />
           </div>
         </div>
         <p className="text-xs text-muted-foreground mt-2">
