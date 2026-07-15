@@ -1,6 +1,6 @@
 ---
 name: schema-change
-description: Standardized workflow for adding, removing, or renaming fields in the ISSP Builder JSON/IDB schema (IsspDocument, Part1Data–Part4Data and sub-types) or the dormant Prisma schema. Ensures all layers stay in sync — types, defaults, migration, forms, pages, demo file, PDF export, section fields map, and docs.
+description: Standardized workflow for adding, removing, or renaming fields in the ISSP Builder JSON/IDB schema (IsspDocument, Part1Data–Part4Data and sub-types). Ensures all layers stay in sync — types, defaults, migration, forms, pages, demo file, PDF export, section fields map, and docs.
 argument-hint: "[describe the change, e.g. 'add attachments: string[] to Part2Data']"
 ---
 
@@ -228,17 +228,7 @@ If the field does not affect what appears in the PDF (e.g. a draft note, a metad
 
 ---
 
-### Step 11 — Dormant dashboard page (low priority)
-
-`src/app/(dashboard)/dashboard/documents/[id]/partX/Y/page.tsx` is dormant (not reachable from the local-first editor). It may reference `Part*Data` types that now have new required fields.
-
-- If TypeScript complains about it in Step 12: add the field with a hardcoded safe default
-- Do **not** try to read it from the DB — the Prisma column won't exist
-- If TypeScript does not complain: skip this step
-
----
-
-### Step 12 — Type check
+### Step 11 — Type check
 
 ```bash
 npx tsc --noEmit --skipLibCheck
@@ -252,7 +242,7 @@ npx tsc --noEmit --skipLibCheck
 
 ---
 
-### Step 13 — Update documentation
+### Step 12 — Update documentation
 
 - **`docs/session-handoff.md`**: update the `IsspDocument` envelope table, the `Part*Data` descriptions, the `unsavedToFile` or `sectionMeta` sections if relevant, and the IDB store value interface block
 - **`docs/ui-refresh-plan.md`**: update if the change affects section structure or the `SECTION_FIELDS` map
@@ -286,11 +276,37 @@ npx tsc --noEmit --skipLibCheck
 | Field name in demo file doesn't match `types.ts` | Copy the key name from `types.ts`, not from memory |
 | PDF checkboxes still unchecked after field rename | Confirm `.includes()` in export route uses the exact label string the form stores |
 | `SECTION_FIELDS` not updated | If `src/lib/section-fields.ts` exists, add the new field label — otherwise the "Unsaved changes" diff won't show it |
-| Dormant dashboard page causes TS error | Add a hardcoded default; do not wire to DB |
 | `schemaVersion` not bumped for required fields | Old files will skip the migration block and be missing the required field at runtime |
 | Form init normalization causes permanent false-positive "Unsaved changes" | See section below |
 
 ---
+
+## Enum-izing a freeform field — map values, don't just retype
+
+This has bitten twice (IS `classification` 2026-06-12, `projectType` 2026-06-12). When a
+field that previously stored freeform/display strings becomes an enum:
+
+1. **Map every historical value** in `migrateLegacyDoc` — grep the demo file and old git
+   versions of it (`git show <ref>:public/demo/...`) to discover what freeform values
+   actually exist in the wild ("IS-Driven", "Operations Support System", …). The demo file
+   is the best census of legacy values because users downloaded and re-saved it.
+2. **Unknown values:** map to `""` (unset) rather than guessing — status dots will flag the
+   section for review.
+3. **Update the demo file itself** in the same commit, and verify by exercising the
+   dependent UI from demo data — not just rendering it.
+
+## Gating fields — derive, don't default
+
+If a field's value **gates the visibility of other data's UI** (e.g. `projectType ===
+"IS_DRIVEN"` reveals the linked-systems picker), a plain `?? ""` default silently hides
+existing data on old documents: the user has `linkedSystemIds` but can't see the picker
+that edits them.
+
+Rule: in the migration/normalization, **derive the gating value from the data it gates**
+when unset — e.g. `if (!projectType && linkedSystemIds.length > 0) projectType =
+"IS_DRIVEN"`. The derivation must be idempotent (safe to run on every load). Test by
+loading a pre-change `.issp` file and confirming the gated UI is visible without touching
+any control.
 
 ## Form init normalization — a hidden snapshot sync trap
 

@@ -7,9 +7,11 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { useLocalSave } from "@/hooks/use-local-save";
-import { Plus, Trash2, GripVertical, ChevronDown, ChevronRight, Info } from "lucide-react";
+import { Plus, Trash2, ChevronDown, ChevronRight, Info } from "lucide-react";
+import { ConfirmDeleteButton } from "@/components/ui/confirm-delete-button";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
 import { SectionShell } from "@/components/editor/section-shell";
+import { revealNewItem } from "@/lib/reveal";
 
 type AgencyType = "NGA" | "GOCC" | "LGU" | "OTHER";
 
@@ -115,6 +117,7 @@ export function Part1AForm({ agencyType, initialData }: Part1AFormProps) {
     const next = [...data.orgOutcomes, newOO];
     update("orgOutcomes", next);
     setExpandedOOs((prev) => new Set([...prev, newOO.id]));
+    revealNewItem(newOO.id);
   }
 
   function removeOutcome(id: string) {
@@ -290,11 +293,11 @@ export function Part1AForm({ agencyType, initialData }: Part1AFormProps) {
               return (
                 <div
                   key={oo.id}
+                  data-reveal-id={oo.id}
                   className="rounded-lg border bg-card overflow-hidden"
                 >
                   {/* Outcome header */}
                   <div className="flex items-center gap-2 px-4 py-3 bg-muted/30">
-                    <GripVertical className="h-4 w-4 text-muted-foreground/40 shrink-0" />
                     <button
                       onClick={() => toggleOO(oo.id)}
                       className="flex-1 flex items-center gap-2 text-left"
@@ -307,31 +310,28 @@ export function Part1AForm({ agencyType, initialData }: Part1AFormProps) {
                       <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground w-8 shrink-0">
                         {ooShort} {idx + 1}
                       </span>
-                      <span className="text-sm font-medium truncate">
+                      <span className="min-w-0 flex-1 text-sm font-medium line-clamp-2 break-words">
                         {oo.name || (
                           <span className="text-muted-foreground italic">Untitled</span>
                         )}
                       </span>
                     </button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label="Remove outcome"
-                      className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
-                      onClick={() => removeOutcome(oo.id)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
+                    <ConfirmDeleteButton
+                      ariaLabel="Remove outcome"
+                      onDelete={() => removeOutcome(oo.id)}
+                    />
                   </div>
 
                   {/* Outcome body */}
                   {isExpanded && (
                     <div className="p-4 space-y-4">
                       <FormField label={`${ooShort} ${idx + 1} Name / Description`}>
-                        <Input
+                        <Textarea
                           placeholder={`${ooShort} description...`}
                           value={oo.name}
                           onChange={(e) => updateOutcome(oo.id, "name", e.target.value)}
+                          rows={2}
+                          className="resize-none"
                         />
                       </FormField>
 

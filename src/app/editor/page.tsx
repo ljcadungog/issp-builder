@@ -13,12 +13,14 @@ import { PlanMetadataStrip } from "@/components/editor/overview/plan-metadata-st
 import { OverviewHeader } from "@/components/editor/overview/overview-header";
 import { ContinueEditingCard } from "@/components/editor/overview/continue-editing-card";
 import { PartCard } from "@/components/editor/overview/part-card";
-import { PARTS, ALL_SECTIONS, computeStatus } from "@/lib/sections";
+import Link from "next/link";
+import { StatusDot } from "@/components/ui/status-dot";
+import { PARTS, ALL_SECTIONS, FRONT_MATTER_SECTIONS, computeStatus } from "@/lib/sections";
 
 // ─── Splash view (no document loaded) ────────────────────────────────────────
 
 function SplashView() {
-  const { loadFromFile } = useIsspStore();
+  const { loadFromFile, saveStatus, saveError } = useIsspStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -87,10 +89,10 @@ function SplashView() {
           />
         </div>
 
-        {loadError && (
+        {(loadError || (saveStatus === "error" && saveError)) && (
           <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
             <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-            <span>{loadError}</span>
+            <span>{loadError ?? saveError}</span>
           </div>
         )}
 
@@ -127,6 +129,24 @@ function OverviewView() {
       <PlanMetadataStrip doc={doc} />
       <OverviewHeader doc={doc} doneCount={doneCount} totalCount={ALL_SECTIONS.length} />
       <ContinueEditingCard sectionMeta={sectionMeta} />
+      <div className="rounded-xl border bg-card overflow-hidden">
+        <div className="relative">
+          <div className="absolute left-0 inset-y-0 w-[3px] bg-muted-foreground/40" />
+          {FRONT_MATTER_SECTIONS.map((section) => (
+            <Link
+              key={section.id}
+              href={section.href}
+              className="flex items-center gap-2.5 pl-5 pr-4 py-3 text-sm text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <StatusDot status={computeStatus(sectionMeta[section.id])} size={6} className="shrink-0" />
+              <span className="flex-1 truncate">
+                <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mr-2">Front Matter</span>
+                {section.label}
+              </span>
+            </Link>
+          ))}
+        </div>
+      </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {PARTS.map((part) => (
           <PartCard key={part.partNum} part={part} sectionMeta={sectionMeta} />

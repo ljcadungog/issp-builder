@@ -14,15 +14,16 @@ export default function Part3DPage() {
     return null;
   }
 
-  const allProjectIds = [
-    ...doc.part3.internalProjects.map((p) => p.id),
-    ...doc.part3.crossAgencyProjects.map((p) => p.id),
-  ];
+  // Projects from both III-E lists — name which project links each system
+  const linkingProjects = [
+    ...doc.part3.internalProjects,
+    ...doc.part3.crossAgencyProjects,
+  ].map((p) => ({ id: p.id, title: p.title, linkedSystemIds: p.linkedSystemIds ?? [] }));
 
   return (
     <Part3DForm
       initialSystems={doc.part3.proposedSystems}
-      existingProjectIds={allProjectIds}
+      linkingProjects={linkingProjects}
     />
   );
 }

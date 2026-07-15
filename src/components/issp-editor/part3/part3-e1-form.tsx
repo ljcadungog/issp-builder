@@ -17,8 +17,14 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useLocalSave } from "@/hooks/use-local-save";
-import { Plus, Trash2, ChevronDown, ChevronRight, FolderKanban, Link2 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Plus, ChevronDown, ChevronRight, FolderKanban, Link2, Info, Pencil } from "lucide-react";
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
+import { computeProjectCosts } from "@/components/issp-editor/part4/part4-aggregations";
+import type { Part4Data } from "@/lib/store/types";
+import { AddItemDialog, useAddItemDraft } from "@/components/issp-editor/add-item-dialog";
+import { revealNewItem } from "@/lib/reveal";
+import { ConfirmDeleteButton } from "@/components/ui/confirm-delete-button";
+import { cn, php } from "@/lib/utils";
 import type { ProposedSystem } from "./part3-d-form";
 import { SectionShell } from "@/components/editor/section-shell";
 
@@ -37,7 +43,6 @@ export interface IctProject {
   leadAgency?: string;
   implementingAgencies?: string;
   fundingSource: string;
-  totalProjectCost: number;
   year1Deliverables: string;
   year2Deliverables: string;
   year3Deliverables: string;
@@ -48,22 +53,23 @@ function generateId() {
   return `proj-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-const DEFAULT_PROJECT: Omit<IctProject, "id"> = {
-  title: "",
-  description: "",
-  objectives: "",
-  projectType: "",
-  linkedSystemIds: [],
-  strategicAlignment: [],
-  harmonizationFramework: [],
-  implementingUnit: "",
-  totalProjectCost: 0,
-  fundingSource: "",
-  duration: "",
-  year1Deliverables: "",
-  year2Deliverables: "",
-  year3Deliverables: "",
-};
+function makeDefaultProject(planDuration: string): Omit<IctProject, "id"> {
+  return {
+    title: "",
+    description: "",
+    objectives: "",
+    projectType: "",
+    linkedSystemIds: [],
+    strategicAlignment: [],
+    harmonizationFramework: [],
+    implementingUnit: "",
+    fundingSource: "",
+    duration: planDuration,
+    year1Deliverables: "",
+    year2Deliverables: "",
+    year3Deliverables: "",
+  };
+}
 
 // Per MITHI Resolution 2025-01 / ISSP Guidelines 2026
 const STRATEGIC_ALIGNMENT_OPTIONS = [
@@ -89,6 +95,137 @@ const FUNDING_OPTIONS = [
   "Other Income Generating Sources",
 ];
 
+type DurationMode = "single" | "range";
+
+function yearsBetween(startYear: number, endYear: number): string[] {
+  const start = Math.min(startYear, endYear);
+  const end = Math.max(startYear, endYear);
+  return Array.from({ length: end - start + 1 }, (_, index) => String(start + index));
+}
+
+function formatDuration(start: string, end?: string): string {
+  return end && end !== start ? `${start}–${end}` : start;
+}
+
+function parseDuration(value: string, planYears: string[]) {
+  const match = value.trim().match(/^(\d{4})(?:\s*[-–]\s*(\d{4}))?$/);
+  const firstYear = planYears[0] ?? "";
+  const lastYear = planYears[planYears.length - 1] ?? firstYear;
+
+  if (!match) {
+    return {
+      valid: value.trim() === "",
+      mode: "range" as DurationMode,
+      start: firstYear,
+      end: lastYear,
+    };
+  }
+
+  const parsedStart = match[1];
+  const parsedEnd = match[2] ?? parsedStart;
+  const start = planYears.includes(parsedStart) ? parsedStart : firstYear;
+  const end = planYears.includes(parsedEnd) ? parsedEnd : start;
+  const valid = planYears.includes(parsedStart) && planYears.includes(parsedEnd) && Number(end) >= Number(start);
+
+  return {
+    valid,
+    mode: end !== start ? "range" as DurationMode : "single" as DurationMode,
+    start,
+    end,
+  };
+}
+
+function DurationPicker({
+  value,
+  planYears,
+  planDuration,
+  onChange,
+}: {
+  value: string;
+  planYears: string[];
+  planDuration: string;
+  onChange: (value: string) => void;
+}) {
+  const parsed = parseDuration(value, planYears);
+  const startIndex = Math.max(planYears.indexOf(parsed.start), 0);
+  const rangeEndOptions = planYears.slice(startIndex);
+
+  function setMode(mode: DurationMode) {
+    if (mode === "single") {
+      onChange(parsed.start);
+      return;
+    }
+    const end = Number(parsed.end) >= Number(parsed.start) ? parsed.end : planYears[planYears.length - 1];
+    onChange(formatDuration(parsed.start, end));
+  }
+
+  function setStart(start: string) {
+    if (parsed.mode === "single") {
+      onChange(start);
+      return;
+    }
+    const end = Number(parsed.end) >= Number(start) ? parsed.end : start;
+    onChange(formatDuration(start, end));
+  }
+
+  function setEnd(end: string) {
+    onChange(formatDuration(parsed.start, end));
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <Select
+          items={[
+            { value: "single", label: "Single year" },
+            { value: "range", label: "Year range" },
+          ]}
+          value={parsed.mode}
+          onValueChange={(v: DurationMode | null) => v && setMode(v)}
+        >
+          <SelectTrigger className="w-full"><SelectValue placeholder="Mode" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="single">Single year</SelectItem>
+            <SelectItem value="range">Year range</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select
+          items={planYears.map((year) => ({ value: year, label: year }))}
+          value={parsed.start}
+          onValueChange={(v: string | null) => v && setStart(v)}
+        >
+          <SelectTrigger className="w-full"><SelectValue placeholder="Start" /></SelectTrigger>
+          <SelectContent>
+            {planYears.map((year) => (
+              <SelectItem key={year} value={year}>{year}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {parsed.mode === "range" && (
+          <Select
+            items={rangeEndOptions.map((year) => ({ value: year, label: year }))}
+            value={parsed.end}
+            onValueChange={(v: string | null) => v && setEnd(v)}
+          >
+            <SelectTrigger className="w-full"><SelectValue placeholder="End" /></SelectTrigger>
+            <SelectContent>
+              {rangeEndOptions.map((year) => (
+                <SelectItem key={year} value={year}>{year}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+      </div>
+      {!parsed.valid && (
+        <p className="text-xs text-warning">
+          Saved duration &ldquo;{value}&rdquo; is not a valid year or year range for this ISSP period. Choose a value above to replace it.
+        </p>
+      )}
+      <p className="text-xs text-muted-foreground">Allowed values are a single year or a year range within {planDuration}.</p>
+    </div>
+  );
+}
+
 // ─── Project Card ─────────────────────────────────────────────────────────────
 
 function ProjectCard({
@@ -96,6 +233,11 @@ function ProjectCard({
   index,
   proposedSystems,
   isCrossAgency,
+  planDuration,
+  planYears,
+  projectCost,
+  linkOwners,
+  initiallyEditing = false,
   onUpdate,
   onRemove,
 }: {
@@ -103,28 +245,67 @@ function ProjectCard({
   index: number;
   proposedSystems: ProposedSystem[];
   isCrossAgency: boolean;
+  planDuration: string;
+  planYears: string[];
+  projectCost: number;
+  /** systemId → projects (any list) already linking it — powers the double-link warning. */
+  linkOwners: Record<string, { id: string; title: string }[]>;
+  /** New cards open straight into edit mode; existing ones start collapsed, read-only. */
+  initiallyEditing?: boolean;
   onUpdate: (field: string, value: unknown) => void;
   onRemove: () => void;
 }) {
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(initiallyEditing);
+  const [editing, setEditing] = useState(initiallyEditing);
+  const [pendingLink, setPendingLink] = useState<string | null>(null);
 
   const linkedSystems = proposedSystems.filter((s) =>
     project.linkedSystemIds.includes(s.id)
   );
 
-  function toggleLinkedSystem(sysId: string) {
-    const ids = project.linkedSystemIds.includes(sysId)
-      ? project.linkedSystemIds.filter((i) => i !== sysId)
-      : [...project.linkedSystemIds, sysId];
-    onUpdate("linkedSystemIds", ids);
+  function ownersElsewhere(sysId: string) {
+    return (linkOwners[sysId] ?? []).filter((o) => o.id !== project.id);
   }
+
+  function applyLink(sysId: string) {
+    setPendingLink(null);
+    onUpdate("linkedSystemIds", [...project.linkedSystemIds, sysId]);
+  }
+
+  function toggleLinkedSystem(sysId: string) {
+    if (project.linkedSystemIds.includes(sysId)) {
+      setPendingLink(null);
+      onUpdate("linkedSystemIds", project.linkedSystemIds.filter((i) => i !== sysId));
+      return;
+    }
+    // Cross-reference warning (principle 4): name the project already claiming this IS
+    if (ownersElsewhere(sysId).length > 0) {
+      setPendingLink(sysId);
+      return;
+    }
+    applyLink(sysId);
+  }
+
+  const KNOWN_SA = STRATEGIC_ALIGNMENT_OPTIONS.map((o) => o.value);
+  const othersChecked = project.strategicAlignment.includes("Others");
+  const othersText = project.strategicAlignment.find((v) => !KNOWN_SA.includes(v)) ?? "";
 
   function toggleAlignment(value: string) {
     const current = project.strategicAlignment;
-    onUpdate(
-      "strategicAlignment",
-      current.includes(value) ? current.filter((v) => v !== value) : [...current, value]
-    );
+    if (current.includes(value)) {
+      // Unchecking "Others" also drops its custom specify-text
+      const next = value === "Others"
+        ? current.filter((v) => v !== "Others" && KNOWN_SA.includes(v))
+        : current.filter((v) => v !== value);
+      onUpdate("strategicAlignment", next);
+    } else {
+      onUpdate("strategicAlignment", [...current, value]);
+    }
+  }
+
+  function setOthersText(text: string) {
+    const rest = project.strategicAlignment.filter((v) => KNOWN_SA.includes(v));
+    onUpdate("strategicAlignment", text ? [...rest, text] : rest);
   }
 
   function toggleHarmonization(value: string) {
@@ -142,7 +323,7 @@ function ProjectCard({
     : [];
 
   return (
-    <div className="rounded-xl border bg-card overflow-hidden shadow-sm">
+    <div data-reveal-id={project.id} className="rounded-xl border bg-card overflow-hidden shadow-sm">
       {/* Header */}
       <div className="flex items-center gap-3 px-4 py-3 bg-muted/30 border-b">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -165,19 +346,15 @@ function ProjectCard({
               </span>
             )}
           </div>
-          <p className="text-sm font-medium truncate mt-0.5">
+          <p className="text-sm font-medium line-clamp-2 break-words mt-0.5">
             {project.title || <span className="text-muted-foreground italic">Untitled Project</span>}
           </p>
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="Remove project"
-          className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
-          onClick={onRemove}
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </Button>
+        <ConfirmDeleteButton
+          ariaLabel="Remove project"
+          confirmText="Delete project + its KPIs/budget?"
+          onDelete={onRemove}
+        />
         <button
           type="button"
           onClick={() => setExpanded((e) => !e)}
@@ -187,38 +364,54 @@ function ProjectCard({
         </button>
       </div>
 
-      {/* Quick summary row */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-4 border-b">
-        <div className="space-y-1.5 sm:col-span-2">
-          <Label className="text-xs text-muted-foreground uppercase tracking-wide">Project Title</Label>
-          <Input
-            placeholder="e.g., Citizen Feedback Portal Development"
-            value={project.title}
-            onChange={(e) => onUpdate("title", e.target.value)}
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs text-muted-foreground uppercase tracking-wide">Project Type</Label>
-          <Select
-            items={[
-              { value: "IS_DRIVEN", label: "IS-Driven (linked to a proposed IS)" },
-              { value: "STANDALONE", label: "Standalone (infrastructure only)" }
-            ]}
-            value={project.projectType}
-            onValueChange={(v: string | null) => v && onUpdate("projectType", v)}
-          >
-            <SelectTrigger><SelectValue placeholder="Select…" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="IS_DRIVEN">IS-Driven (linked to a proposed IS)</SelectItem>
-              <SelectItem value="STANDALONE">Standalone (infrastructure only)</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
+      {/* Read view (principle 2: read and edit are different modes) */}
+      {expanded && !editing && (
+        <ProjectReadView
+          project={project}
+          linkedSystems={linkedSystems}
+          projectCost={projectCost}
+          isCrossAgency={isCrossAgency}
+          onEdit={() => setEditing(true)}
+        />
+      )}
 
-      {/* Full details */}
-      {expanded && (
+      {/* Full details (edit mode) */}
+      {expanded && editing && (
         <div className="p-4 space-y-6">
+          {/* Identity — title & type live here, not duplicated in the header row */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label className="text-xs text-muted-foreground uppercase tracking-wide">Project Title</Label>
+              <Input
+                placeholder="e.g., Citizen Feedback Portal Development"
+                value={project.title}
+                onChange={(e) => onUpdate("title", e.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground uppercase tracking-wide">Project Type</Label>
+              <Select
+                items={[
+                  { value: "IS_DRIVEN", label: "IS-Driven — links to Part III-D systems" },
+                  { value: "STANDALONE", label: "Standalone (infrastructure only)" }
+                ]}
+                value={project.projectType}
+                onValueChange={(v: string | null) => v && onUpdate("projectType", v)}
+              >
+                <SelectTrigger><SelectValue placeholder="Select…" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="IS_DRIVEN">IS-Driven — links to Part III-D systems</SelectItem>
+                  <SelectItem value="STANDALONE">Standalone (infrastructure only)</SelectItem>
+                </SelectContent>
+              </Select>
+              {!project.projectType && (
+                <p className="text-xs text-muted-foreground">
+                  Choose &ldquo;IS-Driven&rdquo; to link this project to proposed systems from Part III-D.
+                </p>
+              )}
+            </div>
+          </div>
+
           {/* Description + objectives */}
           <div className="grid sm:grid-cols-2 gap-4">
             <div className="space-y-1.5">
@@ -301,6 +494,26 @@ function ProjectCard({
                   })}
                 </div>
               )}
+              {pendingLink && (
+                <div className="rounded-lg border border-warning-border bg-warning-bg px-3 py-2.5 text-xs space-y-2">
+                  <p className="text-warning leading-relaxed">
+                    <strong>{proposedSystems.find((s) => s.id === pendingLink)?.name || "This system"}</strong>{" "}
+                    is already linked to{" "}
+                    <strong>{ownersElsewhere(pendingLink).map((o) => o.title || "an untitled project").join(", ")}</strong>.
+                    An IS can legitimately be delivered by more than one project, but double-linking is
+                    usually a mistake — its budget and KPIs may be double-counted. Link it to this
+                    project as well?
+                  </p>
+                  <div className="flex gap-2">
+                    <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => applyLink(pendingLink)}>
+                      Link anyway
+                    </Button>
+                    <Button type="button" variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setPendingLink(null)}>
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -318,12 +531,20 @@ function ProjectCard({
                     className="mt-0.5"
                   />
                   <span className="text-xs">
-                    <span className="font-medium">{opt.value}</span>
+                    <span className="font-medium">{opt.value === "Others" ? "Others (specify)" : opt.value}</span>
                     <span className="block text-muted-foreground text-xs mt-0.5">{opt.hint}</span>
                   </span>
                 </label>
               ))}
             </div>
+            {othersChecked && (
+              <Input
+                className="mt-1 max-w-md"
+                placeholder="Specify the national or agency-level plan…"
+                value={othersText}
+                onChange={(e) => setOthersText(e.target.value)}
+              />
+            )}
           </div>
 
           {/* Harmonization Framework */}
@@ -360,10 +581,11 @@ function ProjectCard({
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs text-muted-foreground uppercase tracking-wide">Duration</Label>
-              <Input
-                placeholder="e.g., 2026–2028"
+              <DurationPicker
                 value={(project as IctProject).duration ?? ""}
-                onChange={(e) => onUpdate("duration", e.target.value)}
+                planYears={planYears}
+                planDuration={planDuration}
+                onChange={(duration) => onUpdate("duration", duration)}
               />
             </div>
             <div className="space-y-1.5">
@@ -384,16 +606,20 @@ function ProjectCard({
           </div>
 
           <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground uppercase tracking-wide">Total Project Cost (₱)</Label>
-            <Input
-              type="number"
-              min={0}
-              placeholder="0"
-              value={project.totalProjectCost || ""}
-              onChange={(e) => onUpdate("totalProjectCost", Number(e.target.value))}
-              className="max-w-xs"
-            />
-            <p className="text-xs text-muted-foreground">Must match sum of yearly costs in Part IV</p>
+            <div className="flex items-center gap-1.5">
+              <Label className="text-xs text-muted-foreground uppercase tracking-wide">Total Project Cost</Label>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger className="cursor-help text-muted-foreground hover:text-foreground transition-colors">
+                    <Info className="h-3.5 w-3.5" />
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-xs">
+                    Auto-calculated from this project&apos;s resource requirements in Part IV.
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
+            <p className="text-sm font-semibold tabular-nums">{php(projectCost)}</p>
           </div>
 
           {/* 3-Year Milestones */}
@@ -419,8 +645,78 @@ function ProjectCard({
               })}
             </div>
           </div>
+          <div className="flex justify-end border-t pt-3">
+            <Button type="button" variant="outline" size="sm" onClick={() => setEditing(false)}>
+              Done editing
+            </Button>
+          </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Read-only presentation of a project (principle 2) ────────────────────────
+
+function ReadRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-[10rem_1fr] gap-3 text-sm">
+      <span className="text-xs text-muted-foreground uppercase tracking-wide pt-0.5">{label}</span>
+      <div className="min-w-0 whitespace-pre-wrap">{value || <span className="text-muted-foreground">—</span>}</div>
+    </div>
+  );
+}
+
+function ProjectReadView({
+  project,
+  linkedSystems,
+  projectCost,
+  isCrossAgency,
+  onEdit,
+}: {
+  project: IctProject;
+  linkedSystems: ProposedSystem[];
+  projectCost: number;
+  isCrossAgency: boolean;
+  onEdit: () => void;
+}) {
+  const KNOWN_SA = STRATEGIC_ALIGNMENT_OPTIONS.map((o) => o.value);
+  const sa = project.strategicAlignment.filter((v) => KNOWN_SA.includes(v) && v !== "Others");
+  const saOthers = project.strategicAlignment.find((v) => !KNOWN_SA.includes(v));
+  return (
+    <div className="p-4 space-y-3">
+      <ReadRow label="Description" value={project.description} />
+      <ReadRow label="Objectives" value={project.objectives} />
+      <ReadRow
+        label="Project Type"
+        value={
+          project.projectType
+            ? project.projectType === "IS_DRIVEN"
+              ? `IS-Driven${linkedSystems.length ? ` — ${linkedSystems.map((s) => s.name || "Unnamed system").join(", ")}` : ""}`
+              : "Standalone (infrastructure only)"
+            : ""
+        }
+      />
+      <ReadRow
+        label="Strategic Alignment"
+        value={[...sa, ...(project.strategicAlignment.includes("Others") ? [`Others${saOthers ? `: ${saOthers}` : ""}`] : [])].join(", ")}
+      />
+      <ReadRow label="Harmonization" value={project.harmonizationFramework.join(", ")} />
+      <ReadRow label="Duration" value={project.duration} />
+      <ReadRow label="Year 1 Deliverables" value={project.year1Deliverables} />
+      <ReadRow label="Year 2 Deliverables" value={project.year2Deliverables} />
+      <ReadRow label="Year 3 Deliverables" value={project.year3Deliverables} />
+      <ReadRow label="Implementing Unit" value={project.implementingUnit} />
+      <ReadRow label="Total Project Cost" value={<span className="font-semibold tabular-nums">{php(projectCost)}</span>} />
+      <ReadRow label="Funding Source" value={project.fundingSource} />
+      {isCrossAgency && <ReadRow label="Lead Agency" value={project.leadAgency} />}
+      {isCrossAgency && <ReadRow label="Implementing Agencies" value={project.implementingAgencies} />}
+      <div className="flex justify-end border-t pt-3">
+        <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={onEdit}>
+          <Pencil className="h-3.5 w-3.5" />
+          Edit project
+        </Button>
+      </div>
     </div>
   );
 }
@@ -430,23 +726,47 @@ function ProjectCard({
 function ProjectList({
   proposedSystems,
   initialProjects,
+  otherProjects,
   isCrossAgency,
+  planDuration,
+  planYears,
+  projectCosts,
   onSave,
 }: {
   proposedSystems: ProposedSystem[];
   initialProjects: IctProject[];
+  /** Projects from the other III-E list (cross-agency vs internal) — included in link ownership. */
+  otherProjects: IctProject[];
   isCrossAgency: boolean;
+  planDuration: string;
+  planYears: string[];
+  projectCosts: Record<string, number>;
   onSave: (projects: IctProject[]) => void;
 }) {
   const [projects, setProjects] = useState<IctProject[]>(initialProjects);
+  // ids created this session — their cards mount expanded in edit mode
+  const [freshIds] = useState(() => new Set<string>());
+
+  const linkOwners: Record<string, { id: string; title: string }[]> = {};
+  for (const proj of [...projects, ...otherProjects]) {
+    for (const sysId of proj.linkedSystemIds ?? []) {
+      (linkOwners[sysId] ??= []).push({ id: proj.id, title: proj.title });
+    }
+  }
 
   function update(next: IctProject[]) {
     setProjects(next);
     onSave(next);
   }
 
-  function addProject() {
-    update([...projects, { id: generateId(), ...DEFAULT_PROJECT }]);
+  const addDialog = useAddItemDraft();
+
+  function createProject() {
+    const project = { id: generateId(), ...makeDefaultProject(planDuration), title: addDialog.draft.trim() };
+    freshIds.add(project.id);
+    update([...projects, project]);
+    addDialog.setOpen(false);
+    revealNewItem(project.id);
   }
 
   function removeProject(id: string) {
@@ -457,8 +777,6 @@ function ProjectList({
     update(projects.map((p) => (p.id === id ? { ...p, [field]: value } : p)));
   }
 
-  const totalCost = projects.reduce((s, p) => s + (p.totalProjectCost || 0), 0);
-
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap gap-3">
@@ -468,12 +786,6 @@ function ProjectList({
             {isCrossAgency ? "Cross-Agency" : "Internal"} Projects
           </span>
         </div>
-        <div className="flex items-center gap-2 rounded-lg border bg-card px-3 py-2">
-          <span className="text-2xl font-bold text-success">
-            ₱{totalCost.toLocaleString()}
-          </span>
-          <span className="text-xs text-muted-foreground">Total Est. Cost</span>
-        </div>
       </div>
 
       <div className="space-y-4">
@@ -481,7 +793,7 @@ function ProjectList({
           <h2 className="text-base font-semibold">
             {isCrossAgency ? "Cross-Agency ICT Projects" : "Internal ICT Projects"}
           </h2>
-          <Button variant="outline" size="sm" onClick={addProject} className="gap-1.5">
+          <Button variant="outline" size="sm" onClick={addDialog.openDialog} className="gap-1.5">
             <Plus className="h-4 w-4" />
             Add Project
           </Button>
@@ -491,7 +803,7 @@ function ProjectList({
           <Card className="border-dashed">
             <CardContent
               className="flex flex-col items-center justify-center py-12 cursor-pointer"
-              onClick={addProject}
+              onClick={addDialog.openDialog}
             >
               <FolderKanban className="h-10 w-10 text-muted-foreground/30 mb-3" />
               <p className="text-sm text-muted-foreground mb-1">No projects yet.</p>
@@ -507,11 +819,37 @@ function ProjectList({
             index={idx}
             proposedSystems={proposedSystems}
             isCrossAgency={isCrossAgency}
+            planDuration={planDuration}
+            planYears={planYears}
+            projectCost={projectCosts[project.id] ?? 0}
+            linkOwners={linkOwners}
+            initiallyEditing={freshIds.has(project.id)}
             onUpdate={(field, value) => updateProject(project.id, field, value)}
             onRemove={() => removeProject(project.id)}
           />
         ))}
       </div>
+
+      <AddItemDialog
+        open={addDialog.open}
+        onOpenChange={addDialog.setOpen}
+        title={isCrossAgency ? "Add Cross-Agency ICT Project" : "Add Internal ICT Project"}
+        description="Name the project first — the full project card opens right after, ready to fill in."
+        createLabel="Add project"
+        canCreate={addDialog.draft.trim().length > 0}
+        onCreate={createProject}
+      >
+        <div className="space-y-1.5">
+          <Label htmlFor="new-project-title" className="text-sm">Project Title</Label>
+          <Input
+            id="new-project-title"
+            autoFocus
+            placeholder="e.g., Project SIKAP — Streamlined ICT for Key Agency Processes"
+            value={addDialog.draft}
+            onChange={(e) => addDialog.setDraft(e.target.value)}
+          />
+        </div>
+      </AddItemDialog>
     </div>
   );
 }
@@ -521,15 +859,27 @@ function ProjectList({
 export function Part3E1Form({
   proposedSystems,
   initialProjects,
+  otherProjects,
+  startYear,
+  endYear,
+  part4,
 }: {
   proposedSystems: ProposedSystem[];
   initialProjects: IctProject[];
+  otherProjects: IctProject[];
+  startYear: number;
+  endYear: number;
+  part4: Part4Data;
 }) {
   const { debouncedSave } = useLocalSave("part3", "part3/e1");
   const save = useCallback(
     (projects: IctProject[]) => debouncedSave({ internalProjects: projects }),
     [debouncedSave]
   );
+  const planYears = yearsBetween(startYear, endYear);
+  const planDuration = formatDuration(String(startYear), String(endYear));
+  const projectCosts = computeProjectCosts(part4, "internalProjects");
+
   return (
     <SectionShell
       sectionId="part3/e1"
@@ -539,7 +889,11 @@ export function Part3E1Form({
       <ProjectList
         proposedSystems={proposedSystems}
         initialProjects={initialProjects}
+        otherProjects={otherProjects}
         isCrossAgency={false}
+        planDuration={planDuration}
+        planYears={planYears}
+        projectCosts={projectCosts}
         onSave={save}
       />
     </SectionShell>
@@ -551,15 +905,27 @@ export function Part3E1Form({
 export function Part3E2Form({
   proposedSystems,
   initialProjects,
+  otherProjects,
+  startYear,
+  endYear,
+  part4,
 }: {
   proposedSystems: ProposedSystem[];
   initialProjects: IctProject[];
+  otherProjects: IctProject[];
+  startYear: number;
+  endYear: number;
+  part4: Part4Data;
 }) {
   const { debouncedSave } = useLocalSave("part3", "part3/e2");
   const save = useCallback(
     (projects: IctProject[]) => debouncedSave({ crossAgencyProjects: projects }),
     [debouncedSave]
   );
+  const planYears = yearsBetween(startYear, endYear);
+  const planDuration = formatDuration(String(startYear), String(endYear));
+  const projectCosts = computeProjectCosts(part4, "crossAgencyProjects");
+
   return (
     <SectionShell
       sectionId="part3/e2"
@@ -569,7 +935,11 @@ export function Part3E2Form({
       <ProjectList
         proposedSystems={proposedSystems}
         initialProjects={initialProjects}
+        otherProjects={otherProjects}
         isCrossAgency={true}
+        planDuration={planDuration}
+        planYears={planYears}
+        projectCosts={projectCosts}
         onSave={save}
       />
     </SectionShell>

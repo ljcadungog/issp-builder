@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
+import { NumberInput } from "@/components/ui/number-input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import {
   Select,
@@ -13,6 +14,7 @@ import {
 import { useLocalSave } from "@/hooks/use-local-save";
 import { Plus, Trash2 } from "lucide-react";
 import { SectionShell } from "@/components/editor/section-shell";
+import { revealNewItem } from "@/lib/reveal";
 
 interface HCRow {
   id: string;
@@ -23,8 +25,8 @@ interface HCRow {
 
 const EMPLOYMENT_OPTIONS = [
   { value: "PLANTILLA", label: "Plantilla" },
-  { value: "CONTRACTUAL", label: "Contractual / Job Order" },
-  { value: "OUTSOURCED", label: "Outsourced" },
+  { value: "CONTRACTUAL", label: "Contractual" },
+  { value: "OUTSOURCED", label: "Outsourced (JO, COS, and HTC)" },
 ];
 
 function generateId() {
@@ -57,7 +59,9 @@ export function Part3CForm({
   );
 
   function addRow() {
-    update([...rows, { id: generateId(), position: "", employmentStatus: "", quantity: 1 }]);
+    const row = { id: generateId(), position: "", employmentStatus: "", quantity: 1 } as HCRow;
+    update([...rows, row]);
+    revealNewItem(row.id);
   }
 
   function removeRow(id: string) {
@@ -133,7 +137,7 @@ export function Part3CForm({
                   </tr>
                 )}
                 {rows.map((row) => (
-                  <tr key={row.id} className="hover:bg-muted/20">
+                  <tr key={row.id} data-reveal-id={row.id} className="hover:bg-muted/20">
                     <td className="border px-2 py-1">
                       <input
                         type="text"
@@ -164,15 +168,12 @@ export function Part3CForm({
                       </Select>
                     </td>
                     <td className="border px-2 py-1">
-                      <input
-                        type="number"
+                      <NumberInput
+                        unstyled
                         min={1}
                         className="w-full rounded px-2 py-1.5 text-sm text-center bg-card/70 hover:bg-card focus:bg-card focus:outline-none focus:ring-1 focus:ring-ring"
                         value={row.quantity}
-                        onChange={(e) => {
-                          const v = parseInt(e.target.value, 10);
-                          updateRow(row.id, "quantity", isNaN(v) ? 0 : v);
-                        }}
+                        onValueChange={(n) => updateRow(row.id, "quantity", n)}
                       />
                     </td>
                     <td className="border px-2 py-2 text-center">

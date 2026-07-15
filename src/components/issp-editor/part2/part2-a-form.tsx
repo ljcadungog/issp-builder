@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -15,8 +14,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useLocalSave } from "@/hooks/use-local-save";
-import { Plus, Trash2, GripVertical, Info } from "lucide-react";
+import { Plus, Info } from "lucide-react";
+import { ConfirmDeleteButton } from "@/components/ui/confirm-delete-button";
 import { SectionShell } from "@/components/editor/section-shell";
+import { revealNewItem } from "@/lib/reveal";
 
 interface OrgOutcome {
   id: string;
@@ -30,7 +31,6 @@ interface StrategicConcern {
   outcomeIds: string[];
   criticalSystem: string;
   concern: string;
-  currentStrategy: string;
   desiredStrategy: string;
 }
 
@@ -47,7 +47,6 @@ const DEFAULT_CONCERN: Omit<StrategicConcern, "id"> = {
   outcomeIds: ["general"],
   criticalSystem: "",
   concern: "",
-  currentStrategy: "",
   desiredStrategy: "",
 };
 
@@ -72,7 +71,9 @@ export function Part2AForm({ orgOutcomes, initialData }: Part2AFormProps) {
   );
 
   function addConcern() {
-    update([...concerns, { id: generateId(), ...DEFAULT_CONCERN }]);
+    const concern = { id: generateId(), ...DEFAULT_CONCERN };
+    update([...concerns, concern]);
+    revealNewItem(concern.id);
   }
 
   function removeConcern(id: string) {
@@ -108,8 +109,9 @@ export function Part2AForm({ orgOutcomes, initialData }: Part2AFormProps) {
             <p className="font-medium text-warning mb-1">How to fill this section</p>
             <ul className="text-xs text-warning list-disc list-inside space-y-1">
               <li>Link each concern to an Organizational Outcome (OO) defined in Part I.</li>
-              <li>Describe the <strong>current ICT strategy</strong> in place for addressing this concern.</li>
-              <li>Describe the <strong>desired ICT strategy</strong> — what you intend to do in this ISSP period.</li>
+              <li>Identify the <strong>critical management, operating, or business system</strong> affected.</li>
+              <li>Describe the <strong>problem</strong> — barriers or obstacles that hinder or delay performance.</li>
+              <li>Describe the <strong>intended use of ICT</strong> to address the problem in this ISSP period.</li>
             </ul>
           </div>
         </div>
@@ -157,22 +159,16 @@ export function Part2AForm({ orgOutcomes, initialData }: Part2AFormProps) {
           )}
 
           {concerns.map((concern, idx) => (
-            <div key={concern.id} className="rounded-lg border bg-card overflow-hidden">
+            <div key={concern.id} data-reveal-id={concern.id} className="rounded-lg border bg-card overflow-hidden">
               {/* Concern header */}
               <div className="flex items-center gap-2 px-4 py-3 bg-muted/30">
-                <GripVertical className="h-4 w-4 text-muted-foreground/40 shrink-0" />
                 <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mr-auto">
                   Concern #{idx + 1}
                 </span>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label="Remove concern"
-                  className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
-                  onClick={() => removeConcern(concern.id)}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
+                <ConfirmDeleteButton
+                  ariaLabel="Remove concern"
+                  onDelete={() => removeConcern(concern.id)}
+                />
               </div>
 
               {/* Concern body */}
@@ -202,10 +198,12 @@ export function Part2AForm({ orgOutcomes, initialData }: Part2AFormProps) {
                 </div>
                 <div className="space-y-1.5 md:col-span-3">
                   <Label className="text-sm font-medium">Critical Management, Operating, or Business System</Label>
-                  <Input
+                  <Textarea
                     placeholder="Describe actual operations/activities performed..."
                     value={concern.criticalSystem || ""}
                     onChange={(e) => updateConcern(concern.id, "criticalSystem", e.target.value)}
+                    rows={2}
+                    className="resize-none"
                   />
                 </div>
                 <div className="space-y-1.5 md:col-span-3">

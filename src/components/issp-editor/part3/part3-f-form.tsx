@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLocalSave } from "@/hooks/use-local-save";
 import { Plus, Trash2, BarChart3, FolderKanban } from "lucide-react";
 import { SectionShell } from "@/components/editor/section-shell";
+import { revealNewItem } from "@/lib/reveal";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -65,10 +66,9 @@ function ProjectKpiTable({
   const [collapsed, setCollapsed] = useState(false);
 
   function addRow() {
-    onChange({
-      ...kpiSet,
-      rows: [...kpiSet.rows, { id: generateId(), ...DEFAULT_ROW }],
-    });
+    const row = { id: generateId(), ...DEFAULT_ROW };
+    onChange({ ...kpiSet, rows: [...kpiSet.rows, row] });
+    revealNewItem(row.id);
   }
 
   function removeRow(id: string) {
@@ -90,7 +90,7 @@ function ProjectKpiTable({
             <FolderKanban className="h-4 w-4" />
           </div>
           <div className="flex-1 min-w-0">
-            <CardTitle className="text-sm font-semibold truncate">{project.title}</CardTitle>
+            <CardTitle className="text-sm font-semibold line-clamp-2 break-words">{project.title}</CardTitle>
             <p className="text-xs text-muted-foreground mt-0.5">
               {project.projectCategory === "crossAgency" ? "Cross-Agency" : "Internal"} ·{" "}
               {kpiSet.rows.length} KPI{kpiSet.rows.length !== 1 ? "s" : ""}
@@ -117,7 +117,102 @@ function ProjectKpiTable({
 
       {!collapsed && (
         <CardContent className="p-0">
-          <div className="overflow-x-auto">
+          {/* Mobile: card per KPI (the 9-column table is unusable on phones) */}
+          <div className="md:hidden divide-y">
+            {kpiSet.rows.length === 0 && (
+              <p className="px-4 py-6 text-center text-xs text-muted-foreground">
+                No KPIs yet.{" "}
+                <button onClick={addRow} className="font-medium text-primary hover:underline">
+                  Add one.
+                </button>
+              </p>
+            )}
+            {kpiSet.rows.map((row, idx) => (
+              <div key={row.id} data-reveal-id={row.id} className="p-3 space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-muted-foreground">KPI #{idx + 1}</span>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label="Remove KPI row"
+                    className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                    onClick={() => removeRow(row.id)}
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">Hierarchy of Results</label>
+                  <select
+                    className="w-full px-2 py-2 text-xs bg-card rounded border focus:outline-none focus:ring-1 focus:ring-ring"
+                    value={row.hierarchy}
+                    onChange={(e) => updateRow(row.id, "hierarchy", e.target.value as KpiRow["hierarchy"])}
+                  >
+                    <option value="">Select…</option>
+                    <option>Intermediate Outcome</option>
+                    <option>Immediate Outcome</option>
+                    <option>Output</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">Key Performance Indicator</label>
+                  <input
+                    type="text"
+                    className="w-full px-2 py-2 text-xs bg-card rounded border focus:outline-none focus:ring-1 focus:ring-ring"
+                    placeholder="e.g., % reduction in processing time"
+                    value={row.indicator}
+                    onChange={(e) => updateRow(row.id, "indicator", e.target.value)}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {(
+                    [
+                      ["baseline", "Baseline"],
+                      ["year1Target", "Year 1 Target"],
+                      ["year2Target", "Year 2 Target"],
+                      ["year3Target", "Year 3 Target"],
+                    ] as const
+                  ).map(([field, label]) => (
+                    <div key={field} className="space-y-1">
+                      <label className="text-xs text-muted-foreground">{label}</label>
+                      <input
+                        type="text"
+                        className="w-full px-2 py-2 text-xs bg-card rounded border focus:outline-none focus:ring-1 focus:ring-ring"
+                        placeholder="—"
+                        value={row[field]}
+                        onChange={(e) => updateRow(row.id, field, e.target.value)}
+                      />
+                    </div>
+                  ))}
+                </div>
+                <div className="grid grid-cols-1 gap-2">
+                  <div className="space-y-1">
+                    <label className="text-xs text-muted-foreground">Data Collection Method</label>
+                    <input
+                      type="text"
+                      className="w-full px-2 py-2 text-xs bg-card rounded border focus:outline-none focus:ring-1 focus:ring-ring"
+                      placeholder="e.g., Monthly reports"
+                      value={row.dataCollectionMethod}
+                      onChange={(e) => updateRow(row.id, "dataCollectionMethod", e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs text-muted-foreground">Responsibility to Collect Data</label>
+                    <input
+                      type="text"
+                      className="w-full px-2 py-2 text-xs bg-card rounded border focus:outline-none focus:ring-1 focus:ring-ring"
+                      placeholder="e.g., ICT Division"
+                      value={row.responsibleUnit}
+                      onChange={(e) => updateRow(row.id, "responsibleUnit", e.target.value)}
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Desktop: full template table */}
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-xs border-collapse">
               <thead>
                 <tr className="bg-muted/40">
@@ -154,7 +249,7 @@ function ProjectKpiTable({
                   </tr>
                 )}
                 {kpiSet.rows.map((row) => (
-                  <tr key={row.id} className="hover:bg-muted/10">
+                  <tr key={row.id} data-reveal-id={row.id} className="hover:bg-muted/10">
                     <td className="border px-1 py-1">
                       <select
                         className="w-full px-2 py-1.5 text-xs bg-card/70 rounded hover:bg-card focus:bg-card focus:outline-none focus:ring-1 focus:ring-ring"

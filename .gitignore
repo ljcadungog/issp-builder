@@ -15,15 +15,6 @@ coverage/
 # Claude Code local settings (personal, not for repo)
 .claude/settings.local.json
 
-# Prisma generated client
-/src/generated/prisma
-
-# SQLite databases (never commit — contains seed passwords and agency data)
-*.db
-*.db-journal
-*.db-wal
-*.db-shm
-
 # TypeScript incremental build info
 tsconfig.tsbuildinfo
 

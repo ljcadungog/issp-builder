@@ -50,10 +50,10 @@ export function NewIsspDialog({
       agencyHeadName: form.agencyHeadName.trim(),
       agency: {
         name: form.agencyName.trim(),
-        acronym: form.agencyAcronym.trim().toUpperCase(),
+        acronym: form.agencyAcronym.trim(),
         type: form.agencyType,
         websiteUrl: form.agencyWebsite.trim(),
-        logoBase64: null,
+        logoBase64: form.agencyLogo,
       },
     };
     createNew(opts);
@@ -73,7 +73,7 @@ export function NewIsspDialog({
           <DialogTitle>New ISSP</DialogTitle>
         </DialogHeader>
 
-        <IsspFormFields form={form} set={set} endYear={endYear} idPrefix="new-" />
+        <IsspFormFields form={form} set={set} idPrefix="new-" />
 
         {isValid && (
           <div className="rounded-lg bg-muted/50 px-4 py-3 text-xs text-muted-foreground space-y-0.5">

@@ -21,8 +21,10 @@ import {
   SheetDescription,
 } from "@/components/ui/sheet";
 import { useLocalSave } from "@/hooks/use-local-save";
-import { Plus, Trash2, GripVertical, Pencil, Table2, LayoutList, LayoutGrid, ChevronDown } from "lucide-react";
+import { Plus, Trash2, Pencil, Table2, LayoutList, LayoutGrid, ChevronDown } from "lucide-react";
+import { ConfirmDeleteButton } from "@/components/ui/confirm-delete-button";
 import { SectionShell } from "@/components/editor/section-shell";
+import { revealNewItem } from "@/lib/reveal";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -49,9 +51,9 @@ function generateId() {
 }
 
 const COMPLEXITY_OPTIONS = [
-  { value: "Simple", label: "Simple" },
-  { value: "Complex", label: "Complex" },
-  { value: "Highly Technical", label: "Highly Technical" },
+  { value: "Simple", label: "Simple", hint: "Max 3 working days" },
+  { value: "Complex", label: "Complex", hint: "Max 7 working days" },
+  { value: "Highly Technical", label: "Highly Technical", hint: "Max 20 working days" },
 ];
 
 const COMPLEXITY_COLORS: Record<string, string> = {
@@ -84,9 +86,17 @@ function StakeholderDrawer({ open, stakeholder, isNew, onSave, onDelete, onClose
   const [services, setServices] = useState<StakeholderService[]>(
     () => stakeholder?.services?.length ? stakeholder.services : [makeService()]
   );
-  // State is seeded from props by the useState initializers above. The parent
-  // remounts this component (via `key={drawer.id}`) whenever a different
-  // stakeholder is opened, so there's no need to sync via an effect.
+
+  // Re-initialize from props each time the drawer opens (or the target changes
+  // while open). Adjusting state during render avoids an extra effect pass.
+  const [prevSession, setPrevSession] = useState<{ open: boolean; stakeholder: Stakeholder | null }>({ open, stakeholder });
+  if (open !== prevSession.open || stakeholder !== prevSession.stakeholder) {
+    setPrevSession({ open, stakeholder });
+    if (open) {
+      setName(stakeholder?.name ?? "");
+      setServices(stakeholder?.services?.length ? stakeholder.services : [makeService()]);
+    }
+  }
 
   function addSvc() { setServices((p) => [...p, makeService()]); }
   function removeSvc(id: string) { setServices((p) => p.filter((sv) => sv.id !== id)); }
@@ -163,8 +173,11 @@ function StakeholderDrawer({ open, stakeholder, isNew, onSave, onDelete, onClose
                   <SelectContent>
                     {COMPLEXITY_OPTIONS.map((o) => (
                       <SelectItem key={o.value} value={o.value}>
-                        <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${COMPLEXITY_COLORS[o.value]}`}>
-                          {o.label}
+                        <span className="flex flex-col gap-0.5">
+                          <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${COMPLEXITY_COLORS[o.value]}`}>
+                            {o.label}
+                          </span>
+                          <span className="text-xs text-muted-foreground">{o.hint}</span>
                         </span>
                       </SelectItem>
                     ))}
@@ -177,15 +190,11 @@ function StakeholderDrawer({ open, stakeholder, isNew, onSave, onDelete, onClose
 
         <SheetFooter className="px-6 py-4 border-t flex-row items-center justify-between gap-2 shrink-0">
           {!isNew ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-destructive hover:text-destructive hover:bg-destructive/10"
-              onClick={onDelete}
-            >
-              <Trash2 className="h-3.5 w-3.5 mr-1.5" />
-              Delete stakeholder
-            </Button>
+            <ConfirmDeleteButton
+              ariaLabel="Delete stakeholder"
+              confirmText="Delete stakeholder + services?"
+              onDelete={onDelete}
+            />
           ) : <span />}
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
@@ -286,6 +295,7 @@ export function Part1CForm({ initialData }: Part1CFormProps) {
     const s = makeStakeholder();
     update([...stakeholders, s]);
     setOpenIds((prev) => new Set([...prev, s.id]));
+    revealNewItem(s.id);
   }
 
   function removeStakeholder(id: string) {
@@ -406,7 +416,6 @@ export function Part1CForm({ initialData }: Part1CFormProps) {
               <table className="w-full text-sm border-collapse">
                 <thead>
                   <tr className="bg-muted/50">
-                    <th className="border px-3 py-2 w-8" />
                     <th className="border px-3 py-2 text-left font-semibold w-52">
                       Stakeholder / Client
                     </th>
@@ -422,7 +431,7 @@ export function Part1CForm({ initialData }: Part1CFormProps) {
                 <tbody>
                   {stakeholders.length === 0 && (
                     <tr>
-                      <td colSpan={5} className="border px-3 py-8 text-center text-muted-foreground text-sm">
+                      <td colSpan={4} className="border px-3 py-8 text-center text-muted-foreground text-sm">
                         No stakeholders added yet.{" "}
                         <button
                           type="button"
@@ -438,14 +447,8 @@ export function Part1CForm({ initialData }: Part1CFormProps) {
                     const hasServices = s.services.length > 0;
                     const rowSpan = s.services.length + 1;
 
-                    const dragCell = (span: number) => (
-                      <td rowSpan={span} className="border px-2 py-2 text-center align-top">
-                        <GripVertical className="h-4 w-4 text-muted-foreground/40 mx-auto mt-1.5" />
-                      </td>
-                    );
-
                     const nameCell = (span: number) => (
-                      <td rowSpan={span} className="border px-2 py-2 align-top w-52">
+                      <td rowSpan={span} data-reveal-id={s.id} className="border px-2 py-2 align-top w-52">
                         <div className="flex flex-col gap-2">
                           <input
                             type="text"
@@ -454,14 +457,13 @@ export function Part1CForm({ initialData }: Part1CFormProps) {
                             value={s.name}
                             onChange={(e) => updateStakeholderName(s.id, e.target.value)}
                           />
-                          <button
-                            type="button"
-                            onClick={() => removeStakeholder(s.id)}
-                            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive self-start"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                            Remove stakeholder
-                          </button>
+                          <ConfirmDeleteButton
+                            ariaLabel="Remove stakeholder"
+                            confirmText="Delete stakeholder + services?"
+                            onDelete={() => removeStakeholder(s.id)}
+                            className="self-start"
+                            iconClassName="h-3 w-3"
+                          />
                         </div>
                       </td>
                     );
@@ -470,7 +472,6 @@ export function Part1CForm({ initialData }: Part1CFormProps) {
                       <Fragment key={s.id}>
                         {!hasServices ? (
                           <tr className={sIdx > 0 ? "border-t-2 border-t-border/60" : ""}>
-                            {dragCell(1)}
                             {nameCell(1)}
                             <td colSpan={3} className="border px-3 py-3 text-center">
                               <button
@@ -490,7 +491,7 @@ export function Part1CForm({ initialData }: Part1CFormProps) {
                                 key={sv.id}
                                 className={svIdx === 0 && sIdx > 0 ? "border-t-2 border-t-border/60" : ""}
                               >
-                                {svIdx === 0 && <>{dragCell(rowSpan)}{nameCell(rowSpan)}</>}
+                                {svIdx === 0 && nameCell(rowSpan)}
                                 <td className="border px-2 py-1">
                                   <input
                                     type="text"
@@ -514,8 +515,11 @@ export function Part1CForm({ initialData }: Part1CFormProps) {
                                     <SelectContent>
                                       {COMPLEXITY_OPTIONS.map((o) => (
                                         <SelectItem key={o.value} value={o.value}>
-                                          <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${COMPLEXITY_COLORS[o.value]}`}>
-                                            {o.label}
+                                          <span className="flex flex-col gap-0.5">
+                                            <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${COMPLEXITY_COLORS[o.value]}`}>
+                                              {o.label}
+                                            </span>
+                                            <span className="text-xs text-muted-foreground">{o.hint}</span>
                                           </span>
                                         </SelectItem>
                                       ))}
@@ -579,7 +583,7 @@ export function Part1CForm({ initialData }: Part1CFormProps) {
               {stakeholders.map((s, sIdx) => {
                 const isOpen = openIds.has(s.id);
                 return (
-                  <div key={s.id} className="rounded-lg border overflow-hidden">
+                  <div key={s.id} data-reveal-id={s.id} className="rounded-lg border overflow-hidden">
                     {/* Accordion header */}
                     <div className="flex items-center gap-2 px-3 py-2.5 bg-muted/20">
                       <span className="text-xs text-muted-foreground shrink-0 w-5 tabular-nums">
@@ -625,14 +629,11 @@ export function Part1CForm({ initialData }: Part1CFormProps) {
                           className={`h-4 w-4 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}
                         />
                       </button>
-                      <button
-                        type="button"
-                        aria-label="Remove stakeholder"
-                        onClick={() => removeStakeholder(s.id)}
-                        className="h-7 w-7 shrink-0 flex items-center justify-center rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                      <ConfirmDeleteButton
+                        ariaLabel="Remove stakeholder"
+                        confirmText="Delete?"
+                        onDelete={() => removeStakeholder(s.id)}
+                      />
                     </div>
 
                     {/* Accordion body */}
@@ -728,7 +729,7 @@ export function Part1CForm({ initialData }: Part1CFormProps) {
                           {sIdx + 1}
                         </span>
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate">
+                          <p className="text-sm font-medium line-clamp-2 break-words">
                             {s.name || (
                               <span className="italic text-muted-foreground/60">
                                 Unnamed stakeholder
@@ -775,7 +776,6 @@ export function Part1CForm({ initialData }: Part1CFormProps) {
 
       {/* Drawer — only used in Summary mode */}
       <StakeholderDrawer
-        key={drawer.id ?? "closed"}
         open={drawer.open}
         stakeholder={drawerStakeholder}
         isNew={drawerIsNew}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -20,6 +20,9 @@ import {
 } from "@/components/ui/dialog";
 import { useIsspStore } from "@/lib/store";
 import type { AgencyType, IsspScope } from "@/lib/store";
+import { LOGO_ACCEPT, getLogoUploadError, readFileAsDataUrl } from "@/lib/diagram-upload";
+import { toast } from "sonner";
+import { ImagePlus, Trash2, Loader2 } from "lucide-react";
 
 // ─── Lookup tables ────────────────────────────────────────────────────────────
 
@@ -66,6 +69,7 @@ export interface IsspForm {
   agencyType: AgencyType;
   agencyWebsite: string;
   agencyHeadName: string;
+  agencyLogo: string | null;
   startYear: number;
   scope: IsspScope;
   amendmentNumber: number;
@@ -77,6 +81,7 @@ export const BLANK_FORM: IsspForm = {
   agencyType: "NGA",
   agencyWebsite: "",
   agencyHeadName: "",
+  agencyLogo: null,
   startYear: ISSP_START_YEAR,
   scope: "AGENCY_WIDE",
   amendmentNumber: 0,
@@ -87,16 +92,33 @@ export const BLANK_FORM: IsspForm = {
 export function IsspFormFields({
   form,
   set,
-  endYear,
   idPrefix = "",
 }: {
   form: IsspForm;
   set: <K extends keyof IsspForm>(key: K, value: IsspForm[K]) => void;
-  /** End year of the coverage period. Variable to support 3- or 5-year ISSP cycles. */
-  endYear: number;
   idPrefix?: string;
 }) {
   const id = (name: string) => `${idPrefix}${name}`;
+  const logoInputRef = useRef<HTMLInputElement>(null);
+  const [logoLoading, setLogoLoading] = useState(false);
+
+  async function handleLogoFile(file: File | undefined) {
+    if (!file) return;
+    const error = getLogoUploadError(file);
+    if (error) {
+      toast.error(error);
+      return;
+    }
+    setLogoLoading(true);
+    try {
+      set("agencyLogo", await readFileAsDataUrl(file));
+    } catch {
+      toast.error("Failed to read the image. Please try another file.");
+    } finally {
+      setLogoLoading(false);
+    }
+  }
+
   return (
     <div className="space-y-4 py-1">
       {/* Agency */}
@@ -120,7 +142,7 @@ export function IsspFormFields({
               <Input
                 id={id("agencyAcronym")}
                 placeholder="e.g., DICT"
-                className="w-28 uppercase"
+                className="w-28"
                 value={form.agencyAcronym}
                 onChange={(e) => set("agencyAcronym", e.target.value)}
               />
@@ -172,6 +194,55 @@ export function IsspFormFields({
               onChange={(e) => set("agencyHeadName", e.target.value)}
             />
           </div>
+
+          <div className="space-y-1.5">
+            <Label>
+              Agency Logo{" "}
+              <span className="text-muted-foreground font-normal">(optional)</span>
+            </Label>
+            <input
+              ref={logoInputRef}
+              type="file"
+              accept={LOGO_ACCEPT}
+              className="hidden"
+              onChange={(e) => {
+                void handleLogoFile(e.target.files?.[0]);
+                e.target.value = "";
+              }}
+            />
+            <div className="flex items-center gap-3">
+              <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-md border bg-muted/30">
+                {logoLoading ? (
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                ) : form.agencyLogo ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={form.agencyLogo} alt="Agency logo" className="h-full w-full object-contain" />
+                ) : (
+                  <ImagePlus className="h-5 w-5 text-muted-foreground" />
+                )}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="outline" size="sm" disabled={logoLoading} onClick={() => logoInputRef.current?.click()}>
+                  {logoLoading ? "Reading…" : form.agencyLogo ? "Replace" : "Upload logo"}
+                </Button>
+                {form.agencyLogo && !logoLoading && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="text-muted-foreground hover:text-destructive"
+                    onClick={() => set("agencyLogo", null)}
+                  >
+                    <Trash2 className="mr-1 h-3.5 w-3.5" />
+                    Remove
+                  </Button>
+                )}
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Replaces the DICT logo in the PDF cover and page header. PNG, JPG, WebP, or SVG, up to 2 MB.
+            </p>
+          </div>
         </div>
       </div>
 
@@ -183,11 +254,11 @@ export function IsspFormFields({
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5">
             <Label>Start Year</Label>
-            <Input value={form.startYear} readOnly className="bg-muted cursor-not-allowed" />
+            <Input value={ISSP_START_YEAR} readOnly className="bg-muted cursor-not-allowed" />
           </div>
           <div className="space-y-1.5">
             <Label>End Year</Label>
-            <Input value={endYear} readOnly className="bg-muted cursor-not-allowed" />
+            <Input value={ISSP_END_YEAR} readOnly className="bg-muted cursor-not-allowed" />
           </div>
         </div>
         <p className="text-xs text-muted-foreground mt-2">
@@ -262,21 +333,27 @@ export function IsspPropertiesDialog({
   const { doc, update } = useIsspStore();
   const [form, setForm] = useState<IsspForm>(BLANK_FORM);
 
-  useEffect(() => {
-    if (open && doc) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setForm({
-        agencyName: doc.agency.name,
-        agencyAcronym: doc.agency.acronym,
-        agencyType: doc.agency.type as AgencyType,
-        agencyWebsite: doc.agency.websiteUrl ?? "",
-        agencyHeadName: doc.agencyHeadName ?? "",
-        startYear: doc.startYear,
-        scope: doc.scope,
-        amendmentNumber: doc.amendmentNumber,
-      });
-    }
-  }, [open, doc]);
+  // Seed the form only when the dialog opens (closed→open). Reading `doc` here
+  // rather than via an effect on [open, doc] means background autosave updates
+  // (which rewrite `doc` on every keystroke elsewhere) can't clobber edits in
+  // progress while the dialog is open.
+  const [wasOpen, setWasOpen] = useState(false);
+  if (open && !wasOpen && doc) {
+    setWasOpen(true);
+    setForm({
+      agencyName: doc.agency.name,
+      agencyAcronym: doc.agency.acronym,
+      agencyType: doc.agency.type as AgencyType,
+      agencyWebsite: doc.agency.websiteUrl ?? "",
+      agencyHeadName: doc.agencyHeadName ?? "",
+      agencyLogo: doc.agency.logoBase64 ?? null,
+      startYear: doc.startYear,
+      scope: doc.scope,
+      amendmentNumber: doc.amendmentNumber,
+    });
+  } else if (!open && wasOpen) {
+    setWasOpen(false);
+  }
 
   const endYear = ISSP_END_YEAR;
   const title = `${form.agencyAcronym || form.agencyName ? (form.agencyAcronym || form.agencyName) + " " : ""}Information Systems Strategic Plan ${form.startYear}–${endYear}`;
@@ -298,9 +375,10 @@ export function IsspPropertiesDialog({
       agency: {
         ...prev.agency,
         name: form.agencyName.trim(),
-        acronym: form.agencyAcronym.trim().toUpperCase(),
+        acronym: form.agencyAcronym.trim(),
         type: form.agencyType as AgencyType,
         websiteUrl: form.agencyWebsite.trim(),
+        logoBase64: form.agencyLogo,
       },
     }));
     onClose();
@@ -318,7 +396,7 @@ export function IsspPropertiesDialog({
           <DialogTitle>ISSP Properties</DialogTitle>
         </DialogHeader>
 
-        <IsspFormFields form={form} set={set} endYear={endYear} idPrefix="props-" />
+        <IsspFormFields form={form} set={set} idPrefix="props-" />
 
         <div className="rounded-lg bg-muted/50 px-4 py-3 text-xs text-muted-foreground space-y-0.5">
           <p className="font-medium text-foreground text-sm leading-snug">{title}</p>

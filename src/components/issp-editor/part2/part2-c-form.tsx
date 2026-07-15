@@ -16,16 +16,23 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useLocalSave } from "@/hooks/use-local-save";
-import { Plus, Trash2, ChevronDown, ChevronRight, Server } from "lucide-react";
+import { Plus, ChevronDown, ChevronRight, Server, Pencil } from "lucide-react";
+import { ConfirmDeleteButton } from "@/components/ui/confirm-delete-button";
 import { cn } from "@/lib/utils";
 import { SectionShell } from "@/components/editor/section-shell";
+import { YesNoToggle } from "@/components/issp-editor/yes-no-toggle";
+import { AddItemDialog, useAddItemDraft } from "@/components/issp-editor/add-item-dialog";
+import { revealNewItem } from "@/lib/reveal";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+
+type IsClassification = "SUPPORT_TO_OPERATIONS" | "GENERAL_ADMIN" | "OPERATIONS" | "";
+type PiaProcessAnswer = "yes" | "no" | "";
 
 interface InformationSystem {
   id: string;
   name: string;
-  classification: "G2C" | "G2B" | "G2G" | "G2E" | "INTERNAL" | "";
+  classification: IsClassification;
   frontline: boolean;
   deploymentType: "HOSTED" | "CLOUD" | "HYBRID" | "ON_PREMISE" | "";
   url: string;
@@ -34,8 +41,8 @@ interface InformationSystem {
   developmentPlatform: string;
   databaseName: string;
   dataStorage: "ON_PREMISE" | "CLOUD" | "HYBRID" | "";
-  internalUsers: number;
-  externalUsers: number;
+  internalUsers: string;
+  externalUsers: string;
   owner: string;
   interoperability: {
     integrated: boolean;
@@ -46,7 +53,7 @@ interface InformationSystem {
     sharedPlatform: boolean;
   };
   pia: {
-    processesPersonalInfo: boolean;
+    processesPersonalInfo: PiaProcessAnswer;
     piaCompleted: boolean;
   };
 }
@@ -66,8 +73,8 @@ const DEFAULT_IS: Omit<InformationSystem, "id"> = {
   developmentPlatform: "",
   databaseName: "",
   dataStorage: "",
-  internalUsers: 0,
-  externalUsers: 0,
+  internalUsers: "",
+  externalUsers: "",
   owner: "",
   interoperability: {
     integrated: false,
@@ -78,20 +85,25 @@ const DEFAULT_IS: Omit<InformationSystem, "id"> = {
     sharedPlatform: false,
   },
   pia: {
-    processesPersonalInfo: false,
+    processesPersonalInfo: "",
     piaCompleted: false,
   },
 };
 
 // ─── Field config ─────────────────────────────────────────────────────────────
 
+// Template taxonomy per DICT 2026 guidelines — labels must match the PDF renderer
 const CLASSIFICATION_OPTIONS = [
-  { value: "G2C", label: "G2C – Government to Citizen" },
-  { value: "G2B", label: "G2B – Government to Business" },
-  { value: "G2G", label: "G2G – Government to Government" },
-  { value: "G2E", label: "G2E – Government to Employee" },
-  { value: "INTERNAL", label: "Internal / Operations" },
+  { value: "SUPPORT_TO_OPERATIONS", label: "Support to Operations" },
+  { value: "GENERAL_ADMIN", label: "General Administrative Systems" },
+  { value: "OPERATIONS", label: "Operations" },
 ];
+
+const CLASSIFICATION_BADGES: Record<string, string> = {
+  SUPPORT_TO_OPERATIONS: "Support to Ops",
+  GENERAL_ADMIN: "Gen. Admin",
+  OPERATIONS: "Operations",
+};
 
 const DEPLOYMENT_OPTIONS = [
   { value: "ON_PREMISE", label: "On-Premise" },
@@ -115,12 +127,20 @@ const STORAGE_OPTIONS = [
 ];
 
 const CLASSIFICATION_COLORS: Record<string, string> = {
-  G2C: "bg-info-bg text-info border border-info-border",
-  G2B: "bg-success-bg text-success border border-success-border",
-  G2G: "bg-[var(--part-4)]/10 text-[var(--part-4)] border border-[var(--part-4)]/30",
-  G2E: "bg-warning-bg text-warning border border-warning-border",
-  INTERNAL: "bg-muted text-muted-foreground border border-border",
+  SUPPORT_TO_OPERATIONS: "bg-info-bg text-info border border-info-border",
+  GENERAL_ADMIN: "bg-muted text-muted-foreground border border-border",
+  OPERATIONS: "bg-success-bg text-success border border-success-border",
 };
+
+const INTEROP_ITEMS = [
+  { key: "integrated", label: "Integrated with other systems" },
+  { key: "generatesData", label: "Generates data for other systems" },
+  { key: "processesExternalData", label: "Processes data from external systems" },
+  { key: "sharedPlatform", label: "Uses a shared government platform" },
+] as const;
+
+const labelOf = (opts: { value: string; label: string }[], value: string) =>
+  opts.find((o) => o.value === value)?.label ?? value;
 
 // ─── Sub-components ────────────────────────────────────────────────────────────
 
@@ -146,15 +166,19 @@ function FormField({
 function ISCard({
   sys,
   index,
+  initiallyExpanded = false,
   onUpdate,
   onRemove,
 }: {
   sys: InformationSystem;
   index: number;
+  initiallyExpanded?: boolean;
   onUpdate: (field: string, value: unknown) => void;
   onRemove: () => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(initiallyExpanded);
+  // Read and edit are different modes (principle 2): new cards open in edit, existing ones read-first.
+  const [editing, setEditing] = useState(initiallyExpanded);
 
   function updateInterop(field: string, value: unknown) {
     onUpdate("interoperability", { ...sys.interoperability, [field]: value });
@@ -164,8 +188,16 @@ function ISCard({
     onUpdate("pia", { ...sys.pia, [field]: value });
   }
 
+  function setPiaProcessAnswer(value: PiaProcessAnswer) {
+    onUpdate("pia", {
+      ...sys.pia,
+      processesPersonalInfo: value,
+      piaCompleted: value === "yes" ? sys.pia.piaCompleted : false,
+    });
+  }
+
   return (
-    <div className="rounded-xl border bg-card overflow-hidden shadow-sm">
+    <div data-reveal-id={sys.id} className="rounded-xl border bg-card overflow-hidden shadow-sm">
       {/* Card header */}
       <div className="flex items-center gap-3 px-4 py-3 bg-muted/30 border-b">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -176,26 +208,22 @@ function ISCard({
             <span className="text-xs font-semibold text-muted-foreground">IS #{index + 1}</span>
             {sys.classification && (
               <span className={cn("text-xs font-medium px-1.5 py-0.5 rounded", CLASSIFICATION_COLORS[sys.classification] ?? "bg-muted")}>
-                {sys.classification}
+                {CLASSIFICATION_BADGES[sys.classification] ?? sys.classification}
               </span>
             )}
             {sys.frontline && (
               <Badge variant="secondary" className="text-xs h-5">Frontline</Badge>
             )}
           </div>
-          <p className="text-sm font-medium truncate mt-0.5">
+          <p className="text-sm font-medium line-clamp-2 break-words mt-0.5">
             {sys.name || <span className="text-muted-foreground italic">Unnamed System</span>}
           </p>
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="Remove information system"
-          className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
-          onClick={onRemove}
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </Button>
+        <ConfirmDeleteButton
+          ariaLabel="Remove information system"
+          confirmText="Delete this system?"
+          onDelete={onRemove}
+        />
         <button
           type="button"
           onClick={() => setExpanded((e) => !e)}
@@ -209,48 +237,53 @@ function ISCard({
         </button>
       </div>
 
-      {/* Always-visible quick fields */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 p-4 border-b">
-        <FormField label="System Name" className="sm:col-span-2">
-          <Input
-            placeholder="e.g., Human Resource Information System"
-            value={sys.name}
-            onChange={(e) => onUpdate("name", e.target.value)}
-          />
-        </FormField>
-        <FormField label="Classification">
-          <Select
-            items={CLASSIFICATION_OPTIONS}
-            value={sys.classification}
-            onValueChange={(v: string | null) => v && onUpdate("classification", v)}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="Select…" />
-            </SelectTrigger>
-            <SelectContent>
-              {CLASSIFICATION_OPTIONS.map((o) => (
-                <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </FormField>
-        <FormField label="Frontline Service?">
-          <div className="flex items-center gap-2 h-8">
-            <Checkbox
-              id={`frontline-${sys.id}`}
-              checked={sys.frontline}
-              onCheckedChange={(v) => onUpdate("frontline", v === true)}
-            />
-            <label htmlFor={`frontline-${sys.id}`} className="text-sm cursor-pointer">
-              Yes, this is a frontline service
-            </label>
-          </div>
-        </FormField>
-      </div>
+      {/* Read view (principle 2: read and edit are different modes) */}
+      {expanded && !editing && <ISReadView sys={sys} onEdit={() => setEditing(true)} />}
 
-      {/* Expanded details */}
-      {expanded && (
+      {/* Expanded details (edit mode) */}
+      {expanded && editing && (
         <div className="p-4 space-y-6">
+          {/* Identity — name & classification live here, not duplicated in the header row */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+            <FormField label="System Name" className="sm:col-span-2">
+              <Input
+                placeholder="e.g., Human Resource Information System"
+                value={sys.name}
+                onChange={(e) => onUpdate("name", e.target.value)}
+              />
+            </FormField>
+            <FormField label="Classification">
+              <Select
+                items={CLASSIFICATION_OPTIONS}
+                value={sys.classification}
+                onValueChange={(v: string | null) => v && onUpdate("classification", v)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {CLASSIFICATION_OPTIONS.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FormField>
+            {sys.classification === "OPERATIONS" && (
+              <FormField label="Operations Type">
+                <div className="flex items-center gap-2 h-8">
+                  <Checkbox
+                    id={`frontline-${sys.id}`}
+                    checked={sys.frontline}
+                    onCheckedChange={(v) => onUpdate("frontline", v === true)}
+                  />
+                  <label htmlFor={`frontline-${sys.id}`} className="text-sm cursor-pointer">
+                    Frontline service <span className="text-muted-foreground">(unchecked = non-frontline)</span>
+                  </label>
+                </div>
+              </FormField>
+            )}
+          </div>
+
           {/* Basic Info */}
           <div>
             <h4 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-3">
@@ -259,6 +292,8 @@ function ISCard({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField label="System URL / Portal" className="sm:col-span-2">
                 <Input
+                  type="url"
+                  inputMode="url"
                   placeholder="https://..."
                   value={sys.url}
                   onChange={(e) => onUpdate("url", e.target.value)}
@@ -351,20 +386,18 @@ function ISCard({
                   </SelectContent>
                 </Select>
               </FormField>
-              <FormField label="Internal Users">
+              <FormField label="Internal Users (units with access)">
                 <Input
-                  type="number"
-                  min={0}
+                  placeholder="e.g., HR Division, Finance Division"
                   value={sys.internalUsers}
-                  onChange={(e) => onUpdate("internalUsers", Number(e.target.value))}
+                  onChange={(e) => onUpdate("internalUsers", e.target.value)}
                 />
               </FormField>
-              <FormField label="External / Public Users">
+              <FormField label="External Users (orgs with access)">
                 <Input
-                  type="number"
-                  min={0}
+                  placeholder="e.g., GSIS, PhilGEPS, general public"
                   value={sys.externalUsers}
-                  onChange={(e) => onUpdate("externalUsers", Number(e.target.value))}
+                  onChange={(e) => onUpdate("externalUsers", e.target.value)}
                 />
               </FormField>
             </div>
@@ -377,12 +410,7 @@ function ISCard({
             </h4>
             <div className="space-y-3">
               <div className="grid sm:grid-cols-2 gap-3">
-                {[
-                  { key: "integrated", label: "Integrated with other systems" },
-                  { key: "generatesData", label: "Generates data for other systems" },
-                  { key: "processesExternalData", label: "Processes data from external systems" },
-                  { key: "sharedPlatform", label: "Uses a shared government platform" },
-                ].map((item) => (
+                {INTEROP_ITEMS.map((item) => (
                   <label key={item.key} className="flex items-center gap-2.5 cursor-pointer">
                     <Checkbox
                       checked={!!(sys.interoperability as Record<string, unknown>)[item.key]}
@@ -418,15 +446,13 @@ function ISCard({
             <h4 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-3">
               Privacy Impact Assessment (PIA)
             </h4>
-            <div className="flex flex-wrap gap-4">
-              <label className="flex items-center gap-2.5 cursor-pointer">
-                <Checkbox
-                  checked={sys.pia.processesPersonalInfo}
-                  onCheckedChange={(v) => updatePia("processesPersonalInfo", v === true)}
-                />
-                <span className="text-sm">Processes personal / sensitive personal information</span>
-              </label>
-              {sys.pia.processesPersonalInfo && (
+            <div className="space-y-3">
+              <YesNoToggle
+                question="Processes personal / sensitive personal information?"
+                value={sys.pia.processesPersonalInfo}
+                onChange={setPiaProcessAnswer}
+              />
+              {sys.pia.processesPersonalInfo === "yes" && (
                 <label className="flex items-center gap-2.5 cursor-pointer">
                   <Checkbox
                     checked={sys.pia.piaCompleted}
@@ -437,8 +463,94 @@ function ISCard({
               )}
             </div>
           </div>
+
+          <div className="flex justify-end border-t pt-3">
+            <Button type="button" variant="outline" size="sm" onClick={() => setEditing(false)}>
+              Done editing
+            </Button>
+          </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Read-only presentation of a system (principle 2) ─────────────────────────
+
+function ReadRow({ label, value }: { label: string; value: React.ReactNode }) {
+  const empty = value === "" || value === null || value === undefined;
+  return (
+    <div className="grid grid-cols-[10rem_1fr] gap-3 text-sm">
+      <span className="text-xs text-muted-foreground uppercase tracking-wide pt-0.5">{label}</span>
+      <div className="min-w-0 whitespace-pre-wrap break-words">
+        {empty ? <span className="text-muted-foreground">—</span> : value}
+      </div>
+    </div>
+  );
+}
+
+function ISReadView({ sys, onEdit }: { sys: InformationSystem; onEdit: () => void }) {
+  const interop = INTEROP_ITEMS.filter(
+    (item) => (sys.interoperability as Record<string, unknown>)[item.key]
+  ).map((item) => item.label);
+
+  return (
+    <div className="p-4 space-y-3">
+      <ReadRow
+        label="System URL"
+        value={
+          sys.url ? (
+            <a href={sys.url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline break-all">
+              {sys.url}
+            </a>
+          ) : (
+            ""
+          )
+        }
+      />
+      <ReadRow label="Description" value={sys.description} />
+      <ReadRow label="Owner / Custodian" value={sys.owner} />
+      <ReadRow label="Deployment" value={sys.deploymentType ? labelOf(DEPLOYMENT_OPTIONS, sys.deploymentType) : ""} />
+      <ReadRow label="Dev Strategy" value={sys.developmentStrategy ? labelOf(STRATEGY_OPTIONS, sys.developmentStrategy) : ""} />
+      <ReadRow label="Platform" value={sys.developmentPlatform} />
+      <ReadRow label="Database" value={sys.databaseName} />
+      <ReadRow label="Data Storage" value={sys.dataStorage ? labelOf(STORAGE_OPTIONS, sys.dataStorage) : ""} />
+      <ReadRow label="Internal Users" value={sys.internalUsers} />
+      <ReadRow label="External Users" value={sys.externalUsers} />
+      <ReadRow
+        label="Interoperability"
+        value={
+          interop.length
+            ? [
+                interop.join(", "),
+                sys.interoperability.integrated && sys.interoperability.internalSystems
+                  ? `Internal: ${sys.interoperability.internalSystems}`
+                  : "",
+                sys.interoperability.integrated && sys.interoperability.externalSystems
+                  ? `External: ${sys.interoperability.externalSystems}`
+                  : "",
+              ]
+                .filter(Boolean)
+                .join("\n")
+            : ""
+        }
+      />
+      <ReadRow
+        label="Personal Data"
+        value={
+          sys.pia.processesPersonalInfo === "yes"
+            ? `Yes — PIA ${sys.pia.piaCompleted ? "conducted and completed" : "not yet completed"}`
+            : sys.pia.processesPersonalInfo === "no"
+              ? "No"
+              : ""
+        }
+      />
+      <div className="flex justify-end border-t pt-3">
+        <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={onEdit}>
+          <Pencil className="h-3.5 w-3.5" />
+          Edit system
+        </Button>
+      </div>
     </div>
   );
 }
@@ -462,8 +574,16 @@ export function Part2CForm({
     [debouncedSave]
   );
 
-  function addSystem() {
-    update([...systems, { id: generateId(), ...DEFAULT_IS }]);
+  const addDialog = useAddItemDraft();
+  // ids created this session — their cards mount expanded
+  const [freshIds] = useState(() => new Set<string>());
+
+  function createSystem() {
+    const sys = { id: generateId(), ...DEFAULT_IS, name: addDialog.draft.trim() };
+    freshIds.add(sys.id);
+    update([...systems, sys]);
+    addDialog.setOpen(false);
+    revealNewItem(sys.id);
   }
 
   function removeSystem(id: string) {
@@ -483,6 +603,13 @@ export function Part2CForm({
       description="Enumerate all existing information systems maintained or used by the agency."
     >
 
+      {/* One-release migration notice (2026-06: G2C/G2B/etc → official template taxonomy) */}
+      <div className="rounded-lg border border-info-border bg-info-bg px-4 py-2 text-xs text-info">
+        Classifications now use the official template taxonomy (Support to Operations / General
+        Administrative Systems / Operations). Previously saved systems were remapped automatically —
+        please review each system&apos;s classification.
+      </div>
+
       {/* Summary pills */}
       <div className="flex flex-wrap gap-3">
         <div className="flex items-center gap-2 rounded-lg border bg-card px-3 py-2">
@@ -495,7 +622,7 @@ export function Part2CForm({
         </div>
         <div className="flex items-center gap-2 rounded-lg border bg-card px-3 py-2">
           <span className="text-2xl font-bold text-warning">
-            {systems.filter((s) => s.pia.processesPersonalInfo).length}
+            {systems.filter((s) => s.pia.processesPersonalInfo === "yes").length}
           </span>
           <span className="text-xs text-muted-foreground">With Personal Data</span>
         </div>
@@ -505,7 +632,7 @@ export function Part2CForm({
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-base font-semibold">Information Systems</h2>
-          <Button variant="outline" size="sm" onClick={addSystem} className="gap-1.5">
+          <Button variant="outline" size="sm" onClick={addDialog.openDialog} className="gap-1.5">
             <Plus className="h-4 w-4" />
             Add System
           </Button>
@@ -516,7 +643,7 @@ export function Part2CForm({
             <CardContent className="flex flex-col items-center justify-center py-12">
               <Server className="h-10 w-10 text-muted-foreground/30 mb-3" />
               <p className="text-sm text-muted-foreground mb-4">No systems added yet.</p>
-              <Button variant="outline" onClick={addSystem} className="gap-1.5">
+              <Button variant="outline" onClick={addDialog.openDialog} className="gap-1.5">
                 <Plus className="h-4 w-4" />
                 Add the first IS
               </Button>
@@ -529,11 +656,33 @@ export function Part2CForm({
             key={sys.id}
             sys={sys}
             index={idx}
+            initiallyExpanded={freshIds.has(sys.id)}
             onUpdate={(field, value) => updateSystem(sys.id, field, value)}
             onRemove={() => removeSystem(sys.id)}
           />
         ))}
       </div>
+
+      <AddItemDialog
+        open={addDialog.open}
+        onOpenChange={addDialog.setOpen}
+        title="Add Information System"
+        description="Name the system first — the full inventory card opens right after, ready to fill in."
+        createLabel="Add system"
+        canCreate={addDialog.draft.trim().length > 0}
+        onCreate={createSystem}
+      >
+        <div className="space-y-1.5">
+          <Label htmlFor="new-is-name" className="text-sm">System Name</Label>
+          <Input
+            id="new-is-name"
+            autoFocus
+            placeholder="e.g., Human Resource Information System"
+            value={addDialog.draft}
+            onChange={(e) => addDialog.setDraft(e.target.value)}
+          />
+        </div>
+      </AddItemDialog>
     </SectionShell>
   );
 }

@@ -5,12 +5,18 @@ import { useRouter } from "next/navigation";
 import {
   FilePlus2, FolderOpen, BookOpen, FileText, AlertTriangle,
   Loader2, Check, BarChart2, Database, LayoutGrid, TrendingUp, ArrowRight,
-  Sparkles,
+  Sparkles, ChevronDown, FileClock, Trash2,
 } from "lucide-react";
+import { CompletionBar } from "@/components/ui/completion-bar";
+import { RelativeTime } from "@/components/ui/relative-time";
+import { ALL_SECTIONS, computeStatus } from "@/lib/sections";
+import type { IsspDocument } from "@/lib/store";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { useIsspStore } from "@/lib/store";
 import { NewIsspDialog } from "@/components/editor/new-issp-dialog";
 import { useTheme, THEMES } from "@/lib/theme";
+import { toast } from "sonner";
 
 // ── Data ──────────────────────────────────────────────────────────────────────
 
@@ -100,15 +106,106 @@ function ContentModal({ open, onClose, title, html }: { open: boolean; onClose: 
   );
 }
 
+// ── Continue where you left off (Phase 6 — the app's hidden state must be self-evident) ──
+
+function ContinueCard({
+  doc,
+  onContinue,
+  onClear,
+}: {
+  doc: IsspDocument;
+  onContinue: () => void;
+  onClear: () => Promise<{ success: true } | { success: false; error: string }>;
+}) {
+  const [confirmingClear, setConfirmingClear] = useState(false);
+  const [clearing, setClearing] = useState(false);
+
+  const sectionMeta = doc.sectionMeta ?? {};
+  const doneCount = ALL_SECTIONS.filter((s) => computeStatus(sectionMeta[s.id]) === "done").length;
+
+  return (
+    <div className="space-y-2 min-w-0">
+      <p className="text-xs font-semibold text-primary uppercase tracking-wide px-1">Continue where you left off</p>
+      <div className="rounded-xl border border-primary/30 bg-primary/5 p-5 space-y-3">
+      <div className="flex items-start gap-4">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+          <FileClock className="h-5 w-5 text-primary" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="font-semibold text-sm line-clamp-2 break-words">{doc.title || "Untitled ISSP"}</p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {doc.agency.acronym || doc.agency.name} · {doc.startYear}–{doc.endYear} · last edited{" "}
+            <RelativeTime iso={doc.updatedAt} />
+          </p>
+        </div>
+      </div>
+      <CompletionBar numerator={doneCount} denominator={ALL_SECTIONS.length} showLabel />
+      {!confirmingClear ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <Button size="sm" className="gap-1.5" onClick={onContinue}>
+            Continue editing
+            <ArrowRight className="h-3.5 w-3.5" />
+          </Button>
+          <button
+            type="button"
+            onClick={() => setConfirmingClear(true)}
+            className="text-xs text-muted-foreground hover:text-destructive transition-colors inline-flex items-center gap-1"
+          >
+            <Trash2 className="h-3 w-3" />
+            Clear browser data…
+          </button>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-danger-border bg-danger-bg px-3 py-2.5 text-xs space-y-2">
+          <p className="text-foreground/80">
+            This deletes only the copy stored in <strong>this browser</strong> — any <code>.issp</code>{" "}
+            files you saved to disk are untouched. This cannot be undone.
+          </p>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              className="h-7 text-xs"
+              disabled={clearing}
+              onClick={async () => {
+                setClearing(true);
+                const result = await onClear();
+                setClearing(false);
+                if (result.success) {
+                  setConfirmingClear(false);
+                  toast.success("Browser draft cleared.");
+                } else {
+                  toast.error(result.error);
+                }
+              }}
+            >
+              {clearing ? "Deleting…" : "Delete permanently"}
+            </Button>
+            <Button type="button" variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setConfirmingClear(false)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+      </div>
+    </div>
+  );
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 export default function HomePageClient({ aboutHtml, privacyHtml }: { aboutHtml: string; privacyHtml: string; }) {
   const router = useRouter();
-  const { loadFromFile } = useIsspStore();
+  const { doc, loading: storeLoading, loadFromFile, clearDoc, saveStatus, saveError } = useIsspStore();
   const { theme, setTheme } = useTheme();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [newDialogOpen, setNewDialogOpen] = useState(false);
+  // True from the moment a load/create succeeds until the editor route takes over —
+  // keeps the splash from flashing the "Continue where you left off" card mid-navigation.
+  const [navigating, setNavigating] = useState(false);
+  const [moreOptionsOpen, setMoreOptionsOpen] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [sampleLoading, setSampleLoading] = useState(false);
   const [sampleIntroOpen, setSampleIntroOpen] = useState(false);
@@ -116,6 +213,11 @@ export default function HomePageClient({ aboutHtml, privacyHtml }: { aboutHtml: 
   const [privacyOpen, setPrivacyOpen] = useState(false);
   const [whatsNewOpen, setWhatsNewOpen] = useState(false);
   const confettiRef = useRef<((opts: object) => void) | null>(null);
+  const whatsNewScrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (whatsNewOpen && whatsNewScrollRef.current) whatsNewScrollRef.current.scrollTop = 0;
+  }, [whatsNewOpen]);
 
   useEffect(() => {
     import("canvas-confetti").then((mod) => {
@@ -143,8 +245,11 @@ export default function HomePageClient({ aboutHtml, privacyHtml }: { aboutHtml: 
     const file = e.target.files?.[0];
     if (!file) return;
     setLoadError(null);
+    // Flip the guard before the doc mutates, so the splash never re-renders into
+    // the Continue card between loadFromFile's setDoc and navigation.
+    setNavigating(true);
     const result = await loadFromFile(file);
-    if (result.success) { router.push("/editor"); } else { setLoadError(result.error ?? "Unknown error"); }
+    if (result.success) { router.push("/editor"); } else { setNavigating(false); setLoadError(result.error ?? "Unknown error"); }
     e.target.value = "";
   }
 
@@ -157,9 +262,10 @@ export default function HomePageClient({ aboutHtml, privacyHtml }: { aboutHtml: 
       if (!res.ok) throw new Error("Failed to fetch");
       const blob = await res.blob();
       const file = new File([blob], "ncwtr-issp-2026-2028.issp", { type: "application/json" });
+      setNavigating(true);
       const result = await loadFromFile(file);
-      if (result.success) { router.push("/editor"); } else { setLoadError(result.error ?? "Unknown error"); }
-    } catch { setLoadError("Could not load sample file."); }
+      if (result.success) { router.push("/editor"); } else { setNavigating(false); setLoadError(result.error ?? "Unknown error"); }
+    } catch { setNavigating(false); setLoadError("Could not load sample file."); }
     finally { setSampleLoading(false); }
   }
 
@@ -169,11 +275,11 @@ export default function HomePageClient({ aboutHtml, privacyHtml }: { aboutHtml: 
       {/* ── Nav ── */}
       <header className="sticky top-0 z-50 bg-background/95 backdrop-blur-sm border-b">
         <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2.5 logo-eq-hover">
             {/* Part-color accent strip */}
             <div className="flex gap-0.5 mr-1">
-              {PART_COLORS.map((c) => (
-                <span key={c} className="w-1.5 h-4 rounded-full" style={{ background: c }} />
+              {PART_COLORS.map((c, i) => (
+                <span key={c} className="w-1.5 h-4 rounded-full logo-bar" style={{ background: c, animationDelay: `${i * 0.14}s` }} />
               ))}
             </div>
             <span className="font-display font-semibold text-sm tracking-tight">ISSP Builder</span>
@@ -187,103 +293,172 @@ export default function HomePageClient({ aboutHtml, privacyHtml }: { aboutHtml: 
       </header>
 
       {/* ── Hero ── */}
-      <section className="min-h-[calc(100vh-3.5rem)] flex items-center border-b bg-secondary/40">
-        <div className="w-full max-w-md mx-auto px-6 py-14">
-
-          {/* Branding */}
-          <div className="text-center space-y-2 mb-10">
-            {/* Part-color accent strips */}
-            <div className="flex justify-center gap-1 mb-4">
-              {PART_COLORS.map((c) => (
-                <span key={c} className="w-2 h-6 rounded-full" style={{ background: c }} />
-              ))}
-            </div>
-            <h1 className="font-display text-3xl font-bold tracking-tight">ISSP Builder</h1>
-            <p className="text-sm text-muted-foreground">Build your agency&apos;s 3-year Information Systems Strategic Plan</p>
-            <p className="text-xs text-muted-foreground/60">For agency CIOs, ICT focal persons, and government transparency advocates.</p>
+      <section className="min-h-[calc(100dvh-3.5rem)] flex flex-col border-b bg-secondary/40">
+        {/* Branding — anchored near the top of the first viewport */}
+        <div className="w-full max-w-md mx-auto px-6 pt-12 text-center space-y-2">
+          {/* Part-color accent strips */}
+          <div className="flex justify-center gap-1 mb-4 logo-eq">
+            {PART_COLORS.map((c, i) => (
+              <span key={c} className="w-2 h-6 rounded-full logo-bar" style={{ background: c, animationDelay: `${i * 0.14}s` }} />
+            ))}
           </div>
+          <h1 className="font-display text-3xl font-bold tracking-tight">ISSP Builder</h1>
+          <p className="text-sm text-muted-foreground">Build your agency&apos;s 3-year Information Systems Strategic Plan</p>
 
-          {/* What's New pill — padding absorbs glow so nothing overflows the container */}
-          <div className="flex justify-center mb-7">
-            <div className="relative inline-flex p-[6px]">
-              {/* static dim border ring — inset by (6px - 1.5px) = 4.5px so it sits 1.5px outside the button */}
-              <span
-                className="absolute inset-[4.5px] rounded-full opacity-40 pointer-events-none"
-                style={{ background: "conic-gradient(#ff0080, #ff8c00, #ffe600, #00d4aa, #0070f3, #7928ca, #ff0080)" }}
-              />
-              {/* orbiting glow arc — inset by (6px - 5px) = 1px so it sits 5px outside the button */}
-              <span
-                className="absolute inset-px rounded-full animate-glow-orbit blur-md opacity-80 pointer-events-none"
-                style={{ background: "conic-gradient(from var(--glow-angle), transparent 0%, #7928ca 6%, #ff0080 10%, #ff8c00 14%, #ffe600 18%, transparent 24%, transparent 100%)" }}
-              />
-              {/* orbiting sharp arc */}
-              <span
-                className="absolute inset-[4.5px] rounded-full animate-glow-orbit pointer-events-none"
-                style={{ background: "conic-gradient(from var(--glow-angle), transparent 0%, #7928ca 6%, #ff0080 10%, #ff8c00 14%, #ffe600 18%, transparent 24%, transparent 100%)" }}
-              />
-              <button
-                onClick={openWhatsNew}
-                className="relative z-10 inline-flex items-center gap-1.5 rounded-full bg-background px-3.5 py-1.5 text-xs font-medium text-foreground hover:text-primary transition-colors"
-              >
-                <Sparkles className="w-3 h-3" />
-                What&apos;s new — May 25, 2026
+          {/* What's New pill — part of the brand cluster, not the action menu */}
+          <div className="flex justify-center pt-4">
+            <button
+              onClick={openWhatsNew}
+              className="animate-glow-orbit inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium text-foreground hover:text-primary transition-colors"
+            >
+              <Sparkles className="w-3 h-3" />
+              What&apos;s new — June 20–21, 2026
+            </button>
+          </div>
+        </div>
+
+        {/* Action area — centered in the space between branding and chip */}
+        <div className="w-full max-w-md mx-auto px-6 py-10 my-auto">
+
+          {/* With a detected session the splash leads with Continue only;
+              everything else collapses behind an explicit disclosure. */}
+          {(() => {
+            const hasSession = !storeLoading && !!doc;
+
+            // While checking IDB, or once a load/create has fired navigation, hold a
+            // spinner — don't briefly flash the action cards or the Continue card.
+            if (storeLoading || navigating) {
+              return (
+                <div className="flex flex-col items-center justify-center gap-2.5 rounded-xl border border-dashed bg-card/50 py-12">
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                  <p className="text-xs text-muted-foreground">
+                    {navigating ? "Opening the editor…" : "Checking this browser for saved work…"}
+                  </p>
+                </div>
+              );
+            }
+
+            const startNewCard = (
+              <button type="button" onClick={() => setNewDialogOpen(true)}
+                className="group flex items-start gap-4 rounded-xl border bg-card p-5 text-left transition-all hover:bg-accent hover:border-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-secondary group-hover:bg-muted transition-colors">
+                  <FilePlus2 className="h-5 w-5 text-muted-foreground" />
+                </div>
+                <div>
+                  <p className="font-semibold text-sm">Start New ISSP</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Begin a blank ISSP for your agency. You&apos;ll provide agency details and coverage period.</p>
+                </div>
               </button>
-            </div>
-          </div>
+            );
 
-          {/* Action cards */}
-          <div className="grid gap-3">
-            <button type="button" onClick={() => setSampleIntroOpen(true)} disabled={sampleLoading}
-              className="group flex items-start gap-4 rounded-xl border border-primary/20 bg-primary/5 p-5 text-left transition-all hover:bg-primary/10 hover:border-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60 disabled:cursor-not-allowed">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 group-hover:bg-primary/15 transition-colors">
-                {sampleLoading ? <Loader2 className="h-5 w-5 text-primary animate-spin" /> : <BookOpen className="h-5 w-5 text-primary" />}
-              </div>
-              <div>
-                <p className="font-semibold text-sm">{sampleLoading ? "Loading…" : "Explore a sample ISSP"}</p>
-                <p className="text-xs text-muted-foreground mt-0.5">A fully filled-out sample ISSP from a fictitious agency. Good place to start.</p>
-              </div>
-            </button>
+            const loadFileCard = (
+              <button type="button" onClick={() => fileInputRef.current?.click()}
+                className="group flex items-start gap-4 rounded-xl border bg-card p-5 text-left transition-all hover:bg-accent hover:border-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-secondary group-hover:bg-muted transition-colors">
+                  <FolderOpen className="h-5 w-5 text-muted-foreground" />
+                </div>
+                <div>
+                  <p className="font-semibold text-sm">Load from File</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Continue editing an ISSP you previously saved as a <code className="text-xs bg-muted px-1 rounded">.issp</code> file.</p>
+                </div>
+              </button>
+            );
 
-            <div className="flex items-center gap-3 py-1">
-              <div className="flex-1 h-px bg-border" />
-              <span className="text-[11px] text-muted-foreground">or if you&apos;re ready</span>
-              <div className="flex-1 h-px bg-border" />
-            </div>
+            if (!hasSession) {
+              return (
+                <div className="grid gap-3">
+                  <>
+                      <button type="button" onClick={() => setSampleIntroOpen(true)} disabled={sampleLoading}
+                        className="group flex items-start gap-4 rounded-xl border border-primary/20 bg-primary/5 p-5 text-left transition-all hover:bg-primary/10 hover:border-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60 disabled:cursor-not-allowed">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 group-hover:bg-primary/15 transition-colors">
+                          {sampleLoading ? <Loader2 className="h-5 w-5 text-primary animate-spin" /> : <BookOpen className="h-5 w-5 text-primary" />}
+                        </div>
+                        <div>
+                          <p className="font-semibold text-sm">{sampleLoading ? "Loading…" : "Explore a sample ISSP"}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">A fully filled-out sample ISSP from a fictitious agency. Good place to start.</p>
+                        </div>
+                      </button>
 
-            <button type="button" onClick={() => setNewDialogOpen(true)}
-              className="group flex items-start gap-4 rounded-xl border bg-card p-5 text-left transition-all hover:bg-accent hover:border-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-secondary group-hover:bg-muted transition-colors">
-                <FilePlus2 className="h-5 w-5 text-muted-foreground" />
-              </div>
-              <div>
-                <p className="font-semibold text-sm">Start New ISSP</p>
-                <p className="text-xs text-muted-foreground mt-0.5">Begin a blank ISSP for your agency. You&apos;ll provide agency details and coverage period.</p>
-              </div>
-            </button>
+                      <div className="flex items-center gap-3 py-1">
+                        <div className="flex-1 h-px bg-border" />
+                        <span className="text-[11px] text-muted-foreground">or if you&apos;re ready</span>
+                        <div className="flex-1 h-px bg-border" />
+                      </div>
 
-            <button type="button" onClick={() => fileInputRef.current?.click()}
-              className="group flex items-start gap-4 rounded-xl border bg-card p-5 text-left transition-all hover:bg-accent hover:border-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-secondary group-hover:bg-muted transition-colors">
-                <FolderOpen className="h-5 w-5 text-muted-foreground" />
-              </div>
-              <div>
-                <p className="font-semibold text-sm">Load from File</p>
-                <p className="text-xs text-muted-foreground mt-0.5">Continue editing an ISSP you previously saved as a <code className="text-xs bg-muted px-1 rounded">.issp</code> file.</p>
-              </div>
-            </button>
+                      {startNewCard}
+                      {loadFileCard}
+                  </>
+                </div>
+              );
+            }
 
-            <input ref={fileInputRef} type="file" accept=".issp,application/json" className="hidden" onChange={handleFileChange} />
-          </div>
+            return (
+              <div className="grid gap-3">
+                <ContinueCard doc={doc!} onContinue={() => router.push("/editor")} onClear={clearDoc} />
 
-          {loadError && (
+                <button
+                  type="button"
+                  onClick={() => setMoreOptionsOpen((o) => !o)}
+                  className="flex items-center gap-3 py-1 text-left group"
+                  aria-expanded={moreOptionsOpen}
+                >
+                  <div className="flex-1 h-px bg-border" />
+                  <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground group-hover:text-foreground transition-colors">
+                    Other options — start new, load a file, or view the sample
+                    <ChevronDown className={`w-3 h-3 transition-transform ${moreOptionsOpen ? "rotate-180" : ""}`} />
+                  </span>
+                  <div className="flex-1 h-px bg-border" />
+                </button>
+
+                {moreOptionsOpen && (
+                  <>
+                    <p className="text-xs text-muted-foreground rounded-lg border border-warning-border bg-warning-bg px-3 py-2">
+                      These replace the ISSP currently stored in this browser — save it to a{" "}
+                      <code className="bg-muted px-1 rounded">.issp</code> file first if you want to keep it.
+                    </p>
+                    {startNewCard}
+                    {loadFileCard}
+                    <button
+                      type="button"
+                      onClick={() => setSampleIntroOpen(true)}
+                      disabled={sampleLoading}
+                      className="inline-flex items-center gap-1.5 self-start text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-60"
+                    >
+                      {sampleLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <BookOpen className="h-3.5 w-3.5" />}
+                      View the sample ISSP (NCWTR demo)
+                    </button>
+                  </>
+                )}
+              </div>
+            );
+          })()}
+
+          <input ref={fileInputRef} type="file" accept=".issp,application/json" className="hidden" onChange={handleFileChange} />
+
+          {(loadError || (saveStatus === "error" && saveError)) && (
             <div className="mt-4 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
               <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-              <span>{loadError}</span>
+              <span>{loadError ?? saveError}</span>
             </div>
           )}
 
           <p className="mt-8 text-center text-xs text-muted-foreground/60">
             Free to use · No account required · Local-first, works in your browser
+          </p>
+        </div>
+
+        {/* Attribution chip — docked at the bottom of the first viewport, macOS-dock style */}
+        <div className="flex justify-center pb-9 px-6">
+          <p className="chip-attr select-none rounded-full bg-foreground text-background/85 px-4 py-1.5 text-xs font-semibold text-center shadow-lg shadow-foreground/20">
+            Made with <span className="chip-heart">❤️</span> <em>para sa bayan</em> ·{" "}
+            <a
+              href="https://www.instagram.com/carlosanton.io"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-background underline underline-offset-2 hover:opacity-75 transition-opacity"
+            >
+              Carlos Antonio Albornoz
+            </a>
           </p>
         </div>
       </section>
@@ -452,7 +627,7 @@ export default function HomePageClient({ aboutHtml, privacyHtml }: { aboutHtml: 
       {/* ── Dialogs ── */}
       <NcwtrIntroModal open={sampleIntroOpen} onClose={() => setSampleIntroOpen(false)}
         onConfirm={() => { setSampleIntroOpen(false); handleLoadSample(); }} loading={sampleLoading} />
-      <NewIsspDialog open={newDialogOpen} onClose={() => setNewDialogOpen(false)} onCreated={() => router.push("/editor")} />
+      <NewIsspDialog open={newDialogOpen} onClose={() => setNewDialogOpen(false)} onCreated={() => { setNavigating(true); router.push("/editor"); }} />
       <ContentModal open={aboutOpen} onClose={() => setAboutOpen(false)} title="About this project" html={aboutHtml} />
       <ContentModal open={privacyOpen} onClose={() => setPrivacyOpen(false)} title="Privacy & architecture" html={privacyHtml} />
 
@@ -462,109 +637,125 @@ export default function HomePageClient({ aboutHtml, privacyHtml }: { aboutHtml: 
           <DialogHeader className="px-6 pt-5 pb-4 border-b flex-shrink-0">
             <DialogTitle className="font-display text-lg flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-primary" />
-              What&apos;s new — May 25, 2026
+              What&apos;s new — June 20–21, 2026
             </DialogTitle>
           </DialogHeader>
-          <div ref={(el) => { if (el && whatsNewOpen) el.scrollTop = 0; }} className="overflow-y-auto px-6 py-5 space-y-5 text-sm text-muted-foreground leading-relaxed">
+          <div ref={whatsNewScrollRef} className="overflow-y-auto px-6 py-5 space-y-5 text-sm text-muted-foreground leading-relaxed">
             <div tabIndex={0} className="h-0 w-0 overflow-hidden outline-none" aria-hidden="true" />
 
-            {/* Fun blurb */}
-            <div className="rounded-lg border bg-muted/50 px-4 py-3 text-center">
-              <p className="text-sm font-medium italic text-foreground/75">
-                Another weekend has passed, another commit was pushed. Here&apos;s what&apos;s changed:
-              </p>
-            </div>
-
-            {/* 1 — DICT Caravan */}
-            <div className="rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-900/40 dark:bg-amber-950/20 px-4 py-3.5 space-y-1.5">
-              <p className="text-xs font-semibold text-amber-700 dark:text-amber-400 uppercase tracking-wide">DICT ISSP Caravan · May 25, 2026</p>
-              <p className="text-amber-900/80 dark:text-amber-200/80">
-                At the official DICT ISSP Caravan orientation — attended by ~212 agency officers — the DICT ISSP team gave this tool a nod. Yay at napansin rin nila tayo, ano? Haha. Moving forward, the ISSP Builder will strictly follow{" "}
-                <span className="font-medium text-amber-900 dark:text-amber-200">MITHI Resolution 2026-02</span> — so to those asking: no, we will not let you create ISSPs here using the old template.{" "}
-                No official endorsement, but DICT didn&apos;t tell anyone to stop using it either, so we&apos;ll take that as a win. 🏅
-              </p>
-            </div>
-
-            {/* 2 — Coverage Period */}
-            <div className="space-y-1.5">
-              <p className="text-xs font-semibold text-foreground uppercase tracking-wide">Coverage Period Locked</p>
+            {/* Annex 1 — headline feature */}
+            <div className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3.5 space-y-1.5">
+              <p className="text-xs font-semibold text-primary uppercase tracking-wide">Annex 1 — ICT Asset Inventory is Live</p>
               <p>
-                All ISSPs must now cover <span className="text-foreground font-medium">FY 2028–2030</span> per MITHI Resolution 2026-02. The builder enforces this — the coverage period fields are no longer editable. No more accidentally submitting a 2027–2029 plan and finding out at the evaluation stage.
+                The spreadsheet-looking one. Offices now have their own{" "}
+                <span className="text-foreground font-medium">standalone form at <code className="text-xs bg-muted px-1 rounded">/annex1</code></span>{" "}
+                — pick your office type (Central, Regional, or Field), fill in equipment and software counts, and download a{" "}
+                <code className="text-xs bg-muted px-1 rounded">.issp</code> file. Send that file to your CIO.
+              </p>
+              <p>
+                In the main editor, there&apos;s now an{" "}
+                <span className="text-foreground font-medium">Annexes section in the sidebar</span>. Attach each office&apos;s{" "}
+                <code className="text-xs bg-muted px-1 rounded">.issp</code> file there — the builder validates them, shows a count badge, and when you export to PDF,{" "}
+                <span className="text-foreground font-medium">all offices print as a proper Annex 1</span> with per-office tables and a consolidated summary when multiple offices are attached.
               </p>
             </div>
 
-            {/* 3 — Themes */}
+            {/* Table/Cards toggle */}
             <div className="space-y-1.5">
-              <p className="text-xs font-semibold text-foreground uppercase tracking-wide">Themes</p>
+              <p className="text-xs font-semibold text-foreground uppercase tracking-wide">Table or Cards — You Choose</p>
               <p>
-                Four color themes are now available — <span className="text-foreground font-medium">System Light, System Dark, Warm Light, and Warm Dark</span>. Dark mode people: you&apos;re welcome. Warm mode people: also you.
+                The inventory form offers a{" "}
+                <span className="text-foreground font-medium">Table / Cards toggle</span>. The table gives you the classic spreadsheet feel for scanning across all items at once. Cards give each ICT resource its own focused block — cleaner on smaller screens and easier when you&apos;re filling out one item at a time. Both views share the same data; switching doesn&apos;t reset anything.
               </p>
-              <div className="flex items-center gap-2 pt-0.5">
-                {THEMES.map((t) => (
-                  <button
-                    key={t.id}
-                    onClick={() => setTheme(t.id)}
-                    title={t.name}
-                    className="flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-all"
-                    style={{
-                      background: t.background,
-                      borderColor: theme === t.id ? t.border : t.border,
-                      color: t.id.includes("dark") ? "#F0EDE8" : "#18181B",
-                      outline: theme === t.id ? `2px solid ${t.border}` : "none",
-                      outlineOffset: "2px",
-                      fontWeight: theme === t.id ? 600 : 400,
-                    }}
-                  >
-                    <span style={{ width: 8, height: 8, borderRadius: "50%", display: "inline-block", background: theme === t.id ? "#22c55e" : t.secondary, border: theme === t.id ? "1.5px solid #16a34a" : `1px solid ${t.border}`, flexShrink: 0 }} />
-                    {t.name}
-                  </button>
-                ))}
+            </div>
+
+            {/* Custom scrollbars */}
+            <div className="space-y-1.5">
+              <p className="text-xs font-semibold text-foreground uppercase tracking-wide">Scrollbars That Match the Theme</p>
+              <p>
+                Browser default scrollbars are gone. The app now renders thin, rounded scrollbars using the same color tokens as the rest of the UI — so they shift with the theme automatically. Subtle on light, subtle on dark, and they stay out of the way of the content.
+              </p>
+            </div>
+
+            {/* Previously — June 11–13 entry, collapsed */}
+            <details className="group rounded-lg border bg-muted/30">
+              <summary className="flex cursor-pointer select-none items-center justify-between px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground list-none [&::-webkit-details-marker]:hidden">
+                Previously — June 11–13, 2026
+                <ChevronDown className="w-3.5 h-3.5 transition-transform group-open:rotate-180" />
+              </summary>
+              <div className="px-4 pb-4 pt-2 space-y-4">
+                <div className="rounded-lg border bg-muted/50 px-4 py-3 text-center">
+                  <p className="text-xs font-medium italic text-foreground/75">
+                    A full codebase review, an unreasonable amount of PDF wrangling, and a field-by-field audit against the official template later:
+                  </p>
+                </div>
+                <div className="space-y-3 text-xs">
+                  <div className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-3 space-y-1.5">
+                    <p className="text-xs font-semibold text-primary uppercase tracking-wide">Checked Field-by-Field Against the DICT Template</p>
+                    <p>After the May 25 ISSP Caravan, we audited every input in the builder against all 40 pages of the official DICT 2026 template. Most things already matched. The ones that didn&apos;t are fixed — including one checklist card that was quietly asking about an <span className="italic">accounting system</span> where the template asks about your <span className="text-foreground font-medium">Public Service Continuity Plan</span>. If you answered that one before today, kindly revisit it. 🙏</p>
+                  </div>
+                  <p><span className="text-foreground font-medium">Every System &amp; Project Reads Before It Edits</span> — Part II-C and Part III-D now open as read-only summaries. Editing is an explicit button, so browsing no longer risks a stray edit.</p>
+                  <p><span className="text-foreground font-medium">Your Overview, Personalized</span> — greets you by time of day in regional languages, shows what you&apos;re working on, and keeps acronym casing correct (DepEd stays DepEd).</p>
+                  <p><span className="text-foreground font-medium">Latest MITHI Advisories</span> — an advisory ticker in the editor surfaces the latest issuances and links straight to the source on dbm.gov.ph.</p>
+                  <p><span className="text-foreground font-medium">This Page Now Remembers Your Work</span> — returns with a &ldquo;Continue where you left off&rdquo; card showing title, coverage period, last-edited time, and section progress.</p>
+                  <p><span className="text-foreground font-medium">No More Mystery Adds</span> — new items scroll into view, get focus, and pulse briefly. Projects and systems start with a name-first dialog.</p>
+                  <p><span className="text-foreground font-medium">KPIs on Phones</span> — Part III-F&apos;s nine-column table becomes a card per KPI on small screens.</p>
+                  <p><span className="text-foreground font-medium">Agency Logo in the PDF</span> — upload a logo and it appears on the cover and every page header.</p>
+                  <p><span className="text-foreground font-medium">eGov Checklist Follows the Template</span> — &ldquo;Not Utilizing&rdquo; reveals the official follow-up fields; unanswered cards are flagged instead of silently assumed &ldquo;No&rdquo;.</p>
+                  <p><span className="text-foreground font-medium">Total Project Cost Computes Itself</span> — auto-calculated from Part III-E resource requirements. Peso fields format as you type.</p>
+                  <p><span className="text-foreground font-medium">Mandatory Means Mandatory</span> — cybersecurity controls badge every DICT-required item; privacy questions are explicit Yes / No.</p>
+                  <p><span className="text-foreground font-medium">PDF Layout &amp; Accuracy</span> — Part I is Page 1, TOC shows real page numbers, checkboxes actually check, internal codes no longer leak into print.</p>
+                </div>
               </div>
-            </div>
+            </details>
 
-            {/* 4 — Mobile Editing */}
-            <div className="space-y-1.5">
-              <p className="text-xs font-semibold text-foreground uppercase tracking-wide">Mobile Editing</p>
-              <p>
-                You can now fill out your ISSP on your phone — including, hypothetically, during a meeting where someone is presenting the ISSP template. On mobile, the sidebar becomes a hamburger menu that opens a full-screen section selector. Nothing falls off the screen anymore.
-              </p>
-            </div>
-
-            {/* 5 — Input Controls */}
-            <div className="space-y-1.5">
-              <p className="text-xs font-semibold text-foreground uppercase tracking-wide">Input Controls</p>
-              <p>
-                Parts I-C and IV now let you switch between a <span className="text-foreground font-medium">table view</span> (for when you want to see everything at once) and a <span className="text-foreground font-medium">card view</span> (for when you want to pretend it&apos;s not that many fields). Part IV columns are also resizable now, because some agencies have very long project names.
-              </p>
-            </div>
-
-            {/* 6 — Save Reminders */}
-            <div className="space-y-1.5">
-              <p className="text-xs font-semibold text-foreground uppercase tracking-wide">Save Reminders</p>
-              <p>
-                There were no save reminders before. You would just close the tab and lose everything. That is no longer the case — the editor now nudges you when you have unsaved changes, so you can actually leave your desk without a minor crisis.
-              </p>
-            </div>
-
-            {/* 7 — Diagrams */}
-            <div className="space-y-1.5">
-              <p className="text-xs font-semibold text-foreground uppercase tracking-wide">Diagrams</p>
-              <p>
-                Network and architecture diagram sections now let you <span className="text-foreground font-medium">upload images directly from your computer</span>. No more broken links because someone renamed a folder on the shared drive.
-              </p>
-            </div>
-
-            {/* 8 — Reliability */}
-            <div className="space-y-1.5">
-              <p className="text-xs font-semibold text-foreground uppercase tracking-wide">Reliability</p>
-              <p>
-                The editor now notices when you&apos;ve changed something and forgot to save — so it will remind you before you lose an hour of work. Part IV also adds up your budget across all three coverage years automatically, because the ISSP is stressful enough without doing mental math.
-              </p>
-            </div>
+            {/* Previously — May 25 entry, collapsed */}
+            <details className="group rounded-lg border bg-muted/30">
+              <summary className="flex cursor-pointer select-none items-center justify-between px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground list-none [&::-webkit-details-marker]:hidden">
+                Previously — May 25, 2026
+                <ChevronDown className="w-3.5 h-3.5 transition-transform group-open:rotate-180" />
+              </summary>
+              <div className="px-4 pb-4 pt-1 space-y-3 text-xs">
+                <div className="rounded-md border border-amber-200 bg-amber-50 dark:border-amber-900/40 dark:bg-amber-950/20 px-3 py-2.5">
+                  <p className="text-amber-900/80 dark:text-amber-200/80">
+                    <span className="font-semibold text-amber-700 dark:text-amber-400">DICT ISSP Caravan</span> — at the official orientation (~212 agency officers), the DICT ISSP team gave this tool a nod. No official endorsement, but nobody told anyone to stop using it either, so we&apos;ll take that as a win. 🏅
+                  </p>
+                </div>
+                <p><span className="text-foreground font-medium">Coverage period locked</span> — all ISSPs cover FY 2028–2030 per MITHI Resolution 2026-02; the fields are no longer editable.</p>
+                <div className="space-y-1.5">
+                  <p><span className="text-foreground font-medium">Themes</span> — four color themes. Dark mode people: you&apos;re welcome. Warm mode people: also you.</p>
+                  <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                    {THEMES.map((t) => (
+                      <button
+                        key={t.id}
+                        onClick={() => setTheme(t.id)}
+                        title={t.name}
+                        className="flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-all"
+                        style={{
+                          background: t.background,
+                          borderColor: t.border,
+                          color: t.id.includes("dark") ? "#F0EDE8" : "#18181B",
+                          outline: theme === t.id ? `2px solid ${t.border}` : "none",
+                          outlineOffset: "2px",
+                          fontWeight: theme === t.id ? 600 : 400,
+                        }}
+                      >
+                        <span style={{ width: 8, height: 8, borderRadius: "50%", display: "inline-block", background: theme === t.id ? "#22c55e" : t.secondary, border: theme === t.id ? "1.5px solid #16a34a" : `1px solid ${t.border}`, flexShrink: 0 }} />
+                        {t.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <p><span className="text-foreground font-medium">Mobile editing</span> — the full editor works on phones; the sidebar becomes a hamburger menu with a full-screen section selector.</p>
+                <p><span className="text-foreground font-medium">Table &amp; card views</span> — Parts I-C and IV switch between table and card layouts; Part IV columns are resizable.</p>
+                <p><span className="text-foreground font-medium">Save reminders</span> — the editor nudges you when you have unsaved changes, before you lose an hour of work.</p>
+                <p><span className="text-foreground font-medium">Diagram uploads</span> — upload network and architecture diagram images directly from your computer.</p>
+              </div>
+            </details>
 
             {/* Footer gag */}
             <p className="text-xs text-muted-foreground/50 italic text-center border-t pt-4">
-              Now if I could actually let you upload your agency&apos;s logo into the PDF headers, that would really be something, huh? Hahaha. Soon.
+              Next: validating Annex 1 against the actual DICT template, then the ISSP Repository. One spreadsheet at a time. 📋
             </p>
 
           </div>

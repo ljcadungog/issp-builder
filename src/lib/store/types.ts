@@ -80,7 +80,6 @@ export interface StrategicConcern {
   outcomeIds: string[];
   criticalSystem: string;
   concern: string;
-  currentStrategy: string;
   desiredStrategy: string;
 }
 
@@ -137,10 +136,14 @@ export interface CyberControls {
   };
 }
 
+/** Template taxonomy per DICT 2026 guidelines (Part II-C / III-D). */
+export type IsClassification = "SUPPORT_TO_OPERATIONS" | "GENERAL_ADMIN" | "OPERATIONS" | "";
+export type PiaProcessAnswer = "yes" | "no" | "";
+
 export interface InformationSystem {
   id: string;
   name: string;
-  classification: "G2C" | "G2B" | "G2G" | "G2E" | "INTERNAL" | "";
+  classification: IsClassification;
   frontline: boolean;
   deploymentType: "HOSTED" | "CLOUD" | "HYBRID" | "ON_PREMISE" | "";
   url: string;
@@ -149,8 +152,10 @@ export interface InformationSystem {
   developmentPlatform: string;
   databaseName: string;
   dataStorage: "ON_PREMISE" | "CLOUD" | "HYBRID" | "";
-  internalUsers: number;
-  externalUsers: number;
+  /** Units within the organization with access (template asks "which", not "how many"). */
+  internalUsers: string;
+  /** External orgs/stakeholders with restricted access. */
+  externalUsers: string;
   owner: string;
   interoperability: {
     integrated: boolean;
@@ -161,16 +166,37 @@ export interface InformationSystem {
     sharedPlatform: boolean;
   };
   pia: {
-    processesPersonalInfo: boolean;
+    processesPersonalInfo: PiaProcessAnswer;
     piaCompleted: boolean;
   };
 }
 
+/** Template "If No" follow-up options (Part II.D items 1, 2, 4, 5, 7). */
+export interface EgpIfNo {
+  usingEquivalent?: boolean;
+  manual?: boolean;
+  proposedDevelopment?: boolean;
+  /** eGovPay only: "Using other digital or electronic payment platform". */
+  otherPlatform?: boolean;
+}
+
+/** Template item 6: citizen assistance / feedback mechanism checkboxes. */
+export interface EgpPortalMechanisms {
+  website: boolean;
+  email: boolean;
+  landline: boolean;
+  socialMedia: boolean;
+  mobile: boolean;
+}
+
 export interface EgpProgram {
-  status: "utilizing" | "proposed" | "not_applicable" | "not_utilizing";
+  status: "utilizing" | "proposed" | "not_applicable" | "not_utilizing" | "";
   url?: string;
   equivalentName?: string;
+  /** eLGU: URL of the equivalent system (template asks for both name and url). */
+  equivalentUrl?: string;
   notes?: string;
+  ifNo?: EgpIfNo;
 }
 
 export interface EgpChecklist {
@@ -179,7 +205,12 @@ export interface EgpChecklist {
   pnpki: EgpProgram & { adoptionPercentage?: number };
   hcmis: EgpProgram;
   ifmis: EgpProgram;
-  onlinePortal: EgpProgram & { channels?: string };
+  onlinePortal: EgpProgram & {
+    /** Legacy free-text channels (pre template-v2 sweep); superseded by mechanisms. */
+    channels?: string;
+    mechanisms?: EgpPortalMechanisms;
+    connectedToPortal?: "yes" | "no" | "";
+  };
   procurement: EgpProgram;
   recordsMgmt: EgpProgram;
   pscp: EgpProgram;
@@ -199,28 +230,31 @@ export interface Part2Data {
 export interface ProposedSystem {
   id: string;
   name: string;
-  classification: string;
+  classification: IsClassification;
   frontline: boolean;
   deploymentType: string;
+  description: string;
   status: "FOR_DEVELOPMENT" | "FOR_ENHANCEMENT" | "";
   enhancementDetails: string;
   developmentStrategy: string;
   developmentPlatform: string;
   databaseName: string;
   dataStorage: string;
-  internalUsers: number;
-  externalUsers: number;
+  internalUsers: string;
+  externalUsers: string;
   owner: string;
   interoperability: {
     integrated: boolean;
     internalSystems: string;
     externalSystems: string;
+    generatesData: boolean;
+    processesExternalData: boolean;
+    sharedPlatform: boolean;
   };
   pia: {
-    processesPersonalInfo: boolean;
+    processesPersonalInfo: PiaProcessAnswer;
     piaRequired: boolean;
   };
-  linkedProjectId: string;
 }
 
 export interface IctProject {
@@ -236,7 +270,8 @@ export interface IctProject {
   leadAgency?: string;
   implementingAgencies?: string;
   fundingSource: string;
-  totalProjectCost: number;
+  // Total project cost is NOT stored — it is derived from the project's
+  // Part IV resource requirements (see computeProjectCosts).
   year1Deliverables: string;
   year2Deliverables: string;
   year3Deliverables: string;
@@ -324,14 +359,45 @@ export interface SectionMeta {
   lastEditedAt: string | null;
 }
 
+// ─── Definition of Terms (front matter) ───────────────────────────────────────
+
+export interface DefinitionTerm {
+  id: string;
+  term: string;
+  definition: string;
+}
+
 // ─── Root document ────────────────────────────────────────────────────────────
+
+// Avoid a circular import: Annex1FilePayload is declared inline here to keep
+// the store types self-contained. The canonical definition lives in
+// src/lib/annex1/types.ts; these two must be kept in sync.
+export interface Annex1FilePayload {
+  version: "1.0";
+  fileType: "annex1";
+  exportedAt: string;
+  tool: "issp-platform";
+  office: { type: string; region?: string; name: string; displayLabel: string };
+  annex1: {
+    equipment: Array<{
+      id: string; type: string; isCustom: boolean;
+      centralOffice: { operational: number; endOfLife: number; backup: number };
+      fieldOffice:   { operational: number; endOfLife: number; backup: number };
+    }>;
+    software: Array<{
+      id: string; type: string; isCustom: boolean;
+      centralOffice: { perpetual: number; subscription: number };
+      fieldOffice:   { perpetual: number; subscription: number };
+    }>;
+  };
+}
 
 export interface IsspDocument {
   version: "1.0";
   fileType: "issp-main";
   exportedAt: string;
   tool: "issp-platform";
-  /** Schema version for migration. 1 = legacy (no sectionMeta). 2 = current. */
+  /** Schema version for migration. 6 = current. */
   schemaVersion?: number;
   title: string;
   startYear: number;
@@ -349,6 +415,10 @@ export interface IsspDocument {
    * Absent key = { userMarkedDone: false, lastEditedAt: null }.
    */
   sectionMeta?: Record<string, SectionMeta>;
+  /** Definition of Terms (front matter). Absent = standard template terms. */
+  definitions?: DefinitionTerm[];
+  /** Annex 1 files attached by the CIO from regional/field offices. */
+  annexedOffices?: Annex1FilePayload[];
   part1: Part1Data;
   part2: Part2Data;
   part3: Part3Data;
