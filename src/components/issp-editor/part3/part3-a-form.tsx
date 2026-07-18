@@ -22,6 +22,36 @@ interface Part3AData {
   currentCybersecControls: CyberControls;
 }
 
+function CurrentNetworkDisclosure({ description }: { description: string }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="rounded-lg border bg-muted/30">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left transition-colors hover:bg-muted/40"
+      >
+        <span className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+          Current infrastructure (from Part II-B)
+        </span>
+        <ChevronDown
+          className={cn(
+            "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
+            open ? "" : "-rotate-90"
+          )}
+        />
+      </button>
+      {open && (
+        <div className="border-t border-border/60 px-3 pt-2.5 pb-3 text-sm whitespace-pre-line text-muted-foreground">
+          {description}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ChecklistSection({
   group,
   currentValues,
@@ -39,13 +69,14 @@ function ChecklistSection({
   const proposedMandatoryCount = mandatoryItems.filter((i) => proposedValues[i.key]).length;
 
   return (
-    <div className={cn("rounded-lg border border-l-4 overflow-hidden", group.color)}>
+    <div className="rounded-lg border border-border overflow-hidden">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center justify-between px-4 py-3 bg-muted/20 hover:bg-muted/40 transition-colors"
+        aria-expanded={open}
+        className="flex w-full items-center justify-between gap-3 px-3 py-2.5 transition-colors hover:bg-muted/40"
       >
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5">
           <span className="text-sm font-semibold">{group.label}</span>
           <span className="text-xs bg-muted text-muted-foreground px-1.5 py-0.5 rounded">
             {proposedCount}/{group.items.length} proposed
@@ -56,16 +87,25 @@ function ChecklistSection({
             </span>
           )}
         </div>
-        <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform", open ? "" : "-rotate-90")} />
+        <ChevronDown
+          className={cn(
+            "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+            open ? "" : "-rotate-90"
+          )}
+        />
       </button>
 
       {open && (
-        <div className="divide-y">
+        <div className="divide-y divide-border border-t border-border">
           {group.items.map((item) => {
             const hasCurrent = !!currentValues[item.key];
             const hasProposed = !!proposedValues[item.key];
+            const proposedWord = hasCurrent ? "Strengthen" : "Propose";
             return (
-              <div key={item.key} className="grid grid-cols-[1fr_auto_auto] items-center gap-3 px-4 py-2.5">
+              <div
+                key={item.key}
+                className="grid grid-cols-1 gap-1.5 px-3 py-2.5 sm:grid-cols-[1fr_auto_auto] sm:items-center sm:gap-3"
+              >
                 <span className="text-sm">
                   {item.label}
                   {item.mandatory && (
@@ -74,27 +114,30 @@ function ChecklistSection({
                     </span>
                   )}
                 </span>
-                {/* Current status badge — derived from Part II-B answers */}
-                <span
-                  className={cn(
-                    "text-xs px-2 py-0.5 rounded-full shrink-0",
-                    hasCurrent
-                      ? "bg-success-bg text-success border border-success-border"
-                      : "bg-muted text-muted-foreground"
-                  )}
-                >
-                  {hasCurrent ? "Already in place (per Part II-B)" : "Not yet in place"}
-                </span>
-                {/* Proposed checkbox — wording shifts for controls that already exist */}
-                <label className="flex items-center gap-1.5 shrink-0 cursor-pointer">
-                  <Checkbox
-                    checked={hasProposed}
-                    onCheckedChange={(v) => onProposedChange(item.key, v === true)}
-                  />
-                  <span className="text-xs text-muted-foreground w-28">
-                    {hasCurrent ? "Strengthen / upgrade" : "Propose to add"}
+                <div className="flex flex-col items-start gap-1.5 sm:contents sm:flex-row sm:items-center">
+                  {/* Current status — read-only, derived from Part II-B answers */}
+                  <span
+                    className={cn(
+                      "shrink-0 rounded-full border px-2 py-0.5 text-xs whitespace-nowrap",
+                      hasCurrent
+                        ? "border-success-border bg-success-bg text-success"
+                        : "border-border bg-muted text-muted-foreground"
+                    )}
+                  >
+                    {hasCurrent ? "Already in place (per Part II-B)" : "Not yet in place"}
                   </span>
-                </label>
+                  {/* Proposed — the template's own tickbox, per Part III.A.2 */}
+                  <label className="flex shrink-0 cursor-pointer items-center gap-1.5">
+                    <Checkbox
+                      checked={hasProposed}
+                      onCheckedChange={(v) => onProposedChange(item.key, v === true)}
+                      aria-label={`${item.label} — ${proposedWord}`}
+                    />
+                    <span className="text-xs whitespace-nowrap text-muted-foreground">
+                      {proposedWord}
+                    </span>
+                  </label>
+                </div>
               </div>
             );
           })}
@@ -149,23 +192,18 @@ export function Part3AForm({ initialData }: { initialData: Part3AData }) {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {initialData.currentNetworkDesc && (
-            <div className="rounded-lg bg-muted/30 border p-3 text-sm">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
-                Current (from Part II-B)
-              </p>
-              <p className="text-muted-foreground whitespace-pre-line">{initialData.currentNetworkDesc}</p>
-            </div>
-          )}
-          <div className="rounded-lg border bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
-            <p className="font-medium text-foreground mb-1">Your proposed network plan should show:</p>
-            <ul className="list-disc list-inside space-y-0.5">
+          <div className="rounded-lg border border-info-border bg-info-bg p-4 text-sm text-info">
+            <p className="font-medium mb-1">Your proposed network plan should show:</p>
+            <ul className="list-disc list-inside space-y-0.5 text-xs text-info">
               <li>Planned connectivity type per office or site</li>
               <li>Target upload/download speeds per office or site</li>
               <li>IPv6 readiness improvements</li>
               <li>Cybersecurity components to add or strengthen</li>
             </ul>
           </div>
+          {initialData.currentNetworkDesc && (
+            <CurrentNetworkDisclosure description={initialData.currentNetworkDesc} />
+          )}
           <Textarea
             placeholder="Describe proposed network infrastructure improvements, new equipment, topology changes, cloud migrations, etc."
             value={networkDesc}
@@ -191,20 +229,22 @@ export function Part3AForm({ initialData }: { initialData: Part3AData }) {
         <CardHeader className="pb-4">
           <CardTitle className="text-base">A.2 Proposed Cybersecurity Controls</CardTitle>
           <CardDescription>
-            Check controls to be <strong>added or strengthened</strong> during the ISSP period. 
+            Check controls to be <strong>added or strengthened</strong> during the ISSP period.
             Current controls are shown for reference.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-3">
-          {CYBER_GROUPS.map((group) => (
-            <ChecklistSection
-              key={group.key}
-              group={group}
-              currentValues={(initialData.currentCybersecControls[group.key] ?? {}) as Record<string, boolean>}
-              proposedValues={(controls[group.key] ?? {}) as Record<string, boolean>}
-              onProposedChange={(itemKey, checked) => handleCheck(group.key, itemKey, checked)}
-            />
-          ))}
+        <CardContent>
+          <div className="space-y-3">
+            {CYBER_GROUPS.map((group) => (
+              <ChecklistSection
+                key={group.key}
+                group={group}
+                currentValues={(initialData.currentCybersecControls[group.key] ?? {}) as Record<string, boolean>}
+                proposedValues={(controls[group.key] ?? {}) as Record<string, boolean>}
+                onProposedChange={(itemKey, checked) => handleCheck(group.key, itemKey, checked)}
+              />
+            ))}
+          </div>
         </CardContent>
       </Card>
 

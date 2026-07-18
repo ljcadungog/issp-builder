@@ -9,7 +9,7 @@
 
 The local-first rearchitecture is **fully implemented**. All phases A–F are done.
 
-**TL;DR:** No sign-in. ISSP data lives in the user's browser (`IndexedDB`), exported to a `.issp` file. The server does only stateless PDF generation (`POST /api/export`). The old server-side DB/auth code remains in the repo but is not wired to the UI.
+**TL;DR:** No sign-in. ISSP contents live in the user's browser (`IndexedDB`) and are exported to a `.issp` file. The server does stateless PDF generation (`POST /api/export`) plus a limited usage log (`POST /api/usage`) containing only agency name, acronym, create/load/restore event, and timestamp. The fictitious sample is excluded. The old server-side DB/auth code remains in the repo but is not wired to the UI.
 
 | Phase | Work | Status |
 |---|---|---|
@@ -268,7 +268,8 @@ interface IsspDocument {
   fileType: "issp-main";
   exportedAt: string;    // updated by saveToFile(); used to compute unsavedToFile
   tool: "issp-platform";
-  schemaVersion?: number;  // 3 = current; absent/1 = legacy; 2 = pre-services; migrated on load
+  schemaVersion?: number;  // 9 = current; absent/1 = legacy; migrated on load (see migrateLegacyDoc)
+  migrationReview?: { sourceSchemaVersion: number; migratedToSchemaVersion: number; pendingSectionIds: string[]; noticeAcknowledgedAt: string | null };
   title: string;
   startYear: number; endYear: number;
   amendmentNumber: number;
@@ -382,7 +383,7 @@ Two export paths:
 
 #### PDF page structure
 1. Cover (no header/footer — generated separately and merged via pdf-lib)
-2. Table of Contents (static page numbers — known gap)
+2. Table of Contents (real page numbers, clickable internal links, and matching nested PDF sidebar bookmarks)
 3. Definition of Terms
 4. Part I — mandate, org outcomes, CIO/Focal, human capital, stakeholders
 5. Part II — strategic concerns, network diagrams, cybersecurity, IS inventory, EGP checklist
@@ -734,9 +735,9 @@ Standalone public module at `/annex1`. Full plan in `docs/annex1-implementation-
 
 ---
 
-## 11. Custom Skills (`.claude/skills/`)
+## 11. Local Agent Skills (`.claude/skills/`)
 
-Project-level Claude Code skills — invoked with `/skill-name` or auto-loaded by Claude when the description matches.
+Local Claude Code skills — invoked with `/skill-name` or auto-loaded by Claude when the description matches. The `.claude/` directory is intentionally gitignored and must be maintained separately from the application repository.
 
 | Skill | Path | Invocation | Purpose |
 |---|---|---|---|
@@ -780,7 +781,7 @@ One-liner for step 2+3 (safe to run even if no stale process exists):
 ss -tlnp | grep 3100 | grep -oP 'pid=\K[0-9]+' | xargs -r kill; sleep 0.5; pm2 restart issp --update-env
 ```
 
-`NEXT_PUBLIC_BASE_PATH="/issp"` is in `.env.production` and is baked into client bundles at build time — no need to set it in pm2 env.
+`NEXT_PUBLIC_BASE_PATH="/issp"` is in the local, gitignored `.env.production` and is baked into client bundles at build time — no need to set it in pm2 env.
 
 ### Puppeteer / Chrome dependencies
 Chrome 148 is installed at `/root/.cache/puppeteer/chrome/linux-148.0.7778.167/chrome-linux64/chrome`.

@@ -1,0 +1,136 @@
+name: SBOM & Infrastructure Gate
+
+# ═══════════════════════════════════════════════════════════════
+# Supply chain gate — SBOM generation + container/IaC scanning.
+# Especially critical for Docker/Kubernetes projects: catches
+# OS-level CVEs in base images that filesystem scans miss.
+# ═══════════════════════════════════════════════════════════════
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "0 6 * * *"
+
+# Triggers on ALL branches and PRs. Branch protection rules
+# enforce the gate on the default branch (main/master/trunk/auto).
+
+jobs:
+  detect:
+    name: Detect optional scan targets
+    runs-on: ubuntu-latest
+    outputs:
+      container: ${{ steps.targets.outputs.container }}
+      iac: ${{ steps.targets.outputs.iac }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect container and infrastructure files
+        id: targets
+        shell: bash
+        run: |
+          if find . -type f \( -name 'Dockerfile' -o -name 'Dockerfile.*' -o -name 'docker-compose.yml' -o -name 'docker-compose.yaml' \) -print -quit | grep -q .; then
+            echo "container=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "container=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if find . -type f \( -name '*.tf' -o -name 'docker-compose.yml' -o -name 'docker-compose.yaml' \) -print -quit | grep -q . \
+            || find k8s kubernetes helm terraform tf -type f -print -quit 2>/dev/null | grep -q .; then
+            echo "iac=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "iac=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  sbom:
+    name: Filesystem SBOM (Syft + Grype)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate SBOM with Syft
+        uses: anchore/sbom-action@v0
+        with:
+          image: ""
+          path: .
+          format: cyclonedx-json
+          output-file: sbom-filesystem.json
+          fail-build: false
+
+      - name: Scan SBOM for vulnerabilities with Grype
+        uses: anchore/scan-action@v6
+        with:
+          sbom: sbom-filesystem.json
+          fail-build: true
+          severity-cutoff: high
+
+      - name: Upload filesystem SBOM
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-filesystem
+          path: sbom-filesystem.json
+          retention-days: 90
+
+  container-scan:
+    name: Container Image Scan (Trivy)
+    needs: detect
+    runs-on: ubuntu-latest
+    # Auto-aware: only runs when a Dockerfile is present
+    if: needs.detect.outputs.container == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: gesf-scan:latest
+
+      - name: Scan Docker image with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: gesf-scan:latest
+          format: "sarif"
+          output: "trivy-container.sarif"
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+
+      - name: Upload container scan results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-scan
+          path: trivy-container.sarif
+          retention-days: 90
+
+  iac-scan:
+    name: Infrastructure Config Scan (Trivy)
+    needs: detect
+    runs-on: ubuntu-latest
+    # Auto-aware: only runs when IaC files are present
+    if: needs.detect.outputs.iac == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan IaC configs with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "config"
+          scan-ref: "."
+          format: "sarif"
+          output: "trivy-iac.sarif"
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+
+      - name: Upload IaC scan results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iac-scan
+          path: trivy-iac.sarif
+          retention-days: 90

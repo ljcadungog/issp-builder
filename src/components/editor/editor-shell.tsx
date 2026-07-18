@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { useIsspStore } from "@/lib/store";
 import { EditorSidebar } from "./editor-sidebar";
 import { EditorMobileSidebarProvider } from "./editor-mobile-sidebar-context";
+import { IsspMigrationReviewDialog } from "./issp-migration-review-dialog";
 
 export function EditorShell({ children }: { children: React.ReactNode }) {
   const { loading, doc, unsavedToFile } = useIsspStore();
@@ -51,6 +52,7 @@ export function EditorShell({ children }: { children: React.ReactNode }) {
   return (
     <EditorMobileSidebarProvider value={{ openMobileSidebar: () => setMobileSidebarOpen(true) }}>
       <div className="h-dvh overflow-hidden bg-background">
+        <IsspMigrationReviewDialog />
         <EditorSidebar
           collapsed={sidebarCollapsed}
           mobileOpen={mobileSidebarOpen}
@@ -59,7 +61,7 @@ export function EditorShell({ children }: { children: React.ReactNode }) {
         />
         <main
           className={cn(
-            "h-full overflow-y-auto overscroll-contain bg-background transition-[padding] duration-200 ease-out",
+            "h-full overflow-y-auto overscroll-contain bg-background transition-[padding] duration-200 ease-out [overflow-anchor:none]",
             sidebarCollapsed ? "md:pl-12" : "md:pl-72"
           )}
         >
