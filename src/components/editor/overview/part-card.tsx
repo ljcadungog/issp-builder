@@ -3,7 +3,15 @@ import type { SectionMeta } from "@/lib/store";
 import { StatusDot } from "@/components/ui/status-dot";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { computeStatus, computePartStatus, type PartDef } from "@/lib/sections";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Landmark, ClipboardCheck, Target, Wallet, type LucideIcon } from "lucide-react";
+
+// One icon per Part, tied to what each Part is actually about (not just decoration).
+const PART_ICONS: Record<PartDef["partNum"], LucideIcon> = {
+  1: Landmark,        // Agency Profile — the institution
+  2: ClipboardCheck,  // Current ICT Assessment — taking stock
+  3: Target,          // Proposed ICT Strategy — strategic thrusts
+  4: Wallet,          // Resource Requirements — the budget
+};
 
 export function PartCard({
   part,
@@ -16,23 +24,30 @@ export function PartCard({
 }) {
   const partStatus = computePartStatus(part.sections, sectionMeta);
   const pendingCount = part.sections.filter((section) => pendingSectionIds.includes(section.id)).length;
+  const Icon = PART_ICONS[part.partNum];
 
   return (
-    <div className="relative rounded-xl border bg-card overflow-hidden">
-      {/* 3px left color strip */}
-      <div className="absolute left-0 inset-y-0 w-[3px]" style={{ backgroundColor: part.color }} />
-
+    <div className="rounded-xl border bg-card overflow-hidden transition-[border-color,box-shadow] duration-150 motion-reduce:transition-none focus-within:border-foreground/30 focus-within:shadow-md">
       {/* Card header */}
-      <div className="pl-5 pr-4 pt-4 pb-3 border-b flex items-start justify-between gap-2">
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-            Part {part.part} · {part.sections.length} sections
-          </p>
-          <p className="font-display text-base font-medium mt-0.5 leading-snug">{part.title}</p>
+      <div className="pl-4 pr-4 pt-4 pb-3 border-b bg-accent/50 flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span
+              className="inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] font-semibold"
+              style={{ backgroundColor: `color-mix(in srgb, ${part.color} 10%, transparent)`, color: part.color }}
+            >
+              Part {part.part}
+            </span>
+            <span className="text-xs text-muted-foreground">{part.sections.length} sections</span>
+          </div>
+          <div className="mt-1.5 flex items-center gap-2 sm:min-h-[2.75rem]">
+            <Icon className="h-5 w-5 shrink-0" style={{ color: part.color }} aria-hidden="true" />
+            <p className="font-display text-base font-medium leading-snug line-clamp-2 break-words min-w-0">{part.title}</p>
+          </div>
         </div>
-        <div className="flex items-center gap-2 mt-1.5">
+        <div className="flex shrink-0 items-center gap-2 mt-1.5">
           {pendingCount > 0 && (
-            <span className="rounded-full border border-warning-border bg-warning-bg px-2 py-0.5 text-[10px] font-semibold text-warning">
+            <span className="whitespace-nowrap rounded-full border border-warning-border bg-warning-bg px-2 py-0.5 text-[10px] font-semibold text-warning">
               {pendingCount} to review
             </span>
           )}
@@ -41,7 +56,7 @@ export function PartCard({
       </div>
 
       {/* Section rows */}
-      <ul className="pl-5 pr-4 py-2 space-y-0">
+      <ul className="pl-4 pr-4 py-2 space-y-0">
         {part.sections.map((section) => {
           const meta = sectionMeta[section.id];
           const status = computeStatus(meta);
@@ -63,7 +78,7 @@ export function PartCard({
                 ) : (
                   <RelativeTime
                     iso={meta?.lastEditedAt}
-                    className="text-xs text-muted-foreground/50 shrink-0"
+                    className="text-xs text-muted-foreground shrink-0"
                   />
                 )}
               </Link>

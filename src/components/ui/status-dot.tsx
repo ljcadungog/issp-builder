@@ -7,7 +7,7 @@ import type { SectionStatus } from "@/lib/store";
  * | status        | color  | meaning                    |
  * |---------------|--------|----------------------------|
  * | `"empty"`     | gray   | Section not yet touched    |
- * | `"in_progress"` | amber | Section has content but not marked done |
+ * | `"in_progress"` | blue | Section has content but not marked done |
  * | `"done"`      | green  | User has marked section done |
  *
  * Used in `EditorSidebar` nav items and `PartCard` section lists.
@@ -22,7 +22,7 @@ interface StatusDotProps {
 
 const COLOR: Record<SectionStatus, string> = {
   done:        "bg-success",
-  in_progress: "bg-warning",
+  in_progress: "bg-info",
   empty:       "bg-muted-foreground/30",
 };
 

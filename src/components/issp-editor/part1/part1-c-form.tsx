@@ -2,7 +2,6 @@
 
 import { Fragment, useState, useCallback } from "react";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import {
@@ -21,17 +20,20 @@ import {
   SheetDescription,
 } from "@/components/ui/sheet";
 import { useLocalSave } from "@/hooks/use-local-save";
-import { Plus, Trash2, Pencil, Table2, LayoutList, LayoutGrid, ChevronDown } from "lucide-react";
+import { Plus, Trash2, Pencil, Table2, LayoutList, ChevronDown, ArrowDownToLine, ArrowUpFromLine } from "lucide-react";
 import { ConfirmDeleteButton } from "@/components/ui/confirm-delete-button";
 import { SectionShell } from "@/components/editor/section-shell";
 import { revealNewItem } from "@/lib/reveal";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+type TransactionDirection = "INCOMING" | "OUTGOING" | "";
+
 interface StakeholderService {
   id: string;
   name: string;
   complexity: "Simple" | "Complex" | "Highly Technical";
+  direction: TransactionDirection;
 }
 
 interface Stakeholder {
@@ -63,14 +65,115 @@ const COMPLEXITY_COLORS: Record<string, string> = {
 };
 
 function makeService(): StakeholderService {
-  return { id: generateId(), name: "", complexity: "Simple" };
+  return { id: generateId(), name: "", complexity: "Simple", direction: "" };
 }
 
 function makeStakeholder(): Stakeholder {
-  return { id: generateId(), name: "", services: [makeService()] };
+  return { id: generateId(), name: "", services: [] };
 }
 
-// ─── Stakeholder Drawer (Cards mode) ─────────────────────────────────────────
+// ─── Direction display (Incoming / Outgoing) ─────────────────────────────────
+
+const DIRECTION_OPTIONS: { value: Exclude<TransactionDirection, "">; label: string; icon: React.ReactNode }[] = [
+  { value: "INCOMING", label: "Incoming", icon: <ArrowDownToLine className="h-3 w-3" /> },
+  { value: "OUTGOING", label: "Outgoing", icon: <ArrowUpFromLine className="h-3 w-3" /> },
+];
+
+function directionIcon(direction: TransactionDirection, className = "h-3 w-3") {
+  if (direction === "INCOMING") return <ArrowDownToLine className={className} />;
+  if (direction === "OUTGOING") return <ArrowUpFromLine className={className} />;
+  return null;
+}
+
+/** Read-only rendering of a direction value — icon + word, no interactive chrome. */
+function DirectionLabel({ direction }: { direction: TransactionDirection }) {
+  if (!direction) return <span className="text-muted-foreground">—</span>;
+  return (
+    <span className="inline-flex items-center gap-1.5 text-sm">
+      {directionIcon(direction, "h-3.5 w-3.5 text-muted-foreground")}
+      {direction === "INCOMING" ? "Incoming" : "Outgoing"}
+    </span>
+  );
+}
+
+/** Editable segmented Incoming/Outgoing control — used only inside edit surfaces. */
+function DirectionToggle({
+  value,
+  onChange,
+}: {
+  value: TransactionDirection;
+  onChange: (d: TransactionDirection) => void;
+}) {
+  return (
+    <div className="inline-flex items-center rounded-md border p-0.5 bg-muted/30" role="group" aria-label="Transaction direction">
+      {DIRECTION_OPTIONS.map(({ value: v, label, icon }) => (
+        <button
+          key={v}
+          type="button"
+          aria-pressed={value === v}
+          onClick={() => onChange(v)}
+          className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${
+            value === v
+              ? "bg-card shadow-sm font-medium text-foreground"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          {icon}
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ─── Direction filter tabs (All / Incoming / Outgoing) — List view only ──────
+
+type DirectionFilter = "all" | "INCOMING" | "OUTGOING";
+
+const FILTER_OPTIONS: { value: DirectionFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "INCOMING", label: "Incoming" },
+  { value: "OUTGOING", label: "Outgoing" },
+];
+
+function DirectionFilterTabs({
+  value,
+  counts,
+  onChange,
+}: {
+  value: DirectionFilter;
+  counts: Record<DirectionFilter, number>;
+  onChange: (v: DirectionFilter) => void;
+}) {
+  return (
+    <div className="inline-flex items-center rounded-md border p-0.5 bg-muted/30" role="tablist" aria-label="Filter transactions by direction">
+      {FILTER_OPTIONS.map(({ value: v, label }) => {
+        const active = value === v;
+        return (
+          <button
+            key={v}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => onChange(v)}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs transition-colors ${
+              active
+                ? "bg-card shadow-sm font-medium text-foreground"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {label}
+            <span className="tabular-nums text-[11px] text-muted-foreground/70">{counts[v]}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Stakeholder Drawer — the one edit surface, used by List view ────────────
+// Delete lives here, and only here: opening this drawer *is* "edit mode" for a
+// stakeholder, so gating delete behind it is automatic, not a separate flag.
 
 interface DrawerProps {
   open: boolean;
@@ -83,9 +186,7 @@ interface DrawerProps {
 
 function StakeholderDrawer({ open, stakeholder, isNew, onSave, onDelete, onClose }: DrawerProps) {
   const [name, setName] = useState(stakeholder?.name ?? "");
-  const [services, setServices] = useState<StakeholderService[]>(
-    () => stakeholder?.services?.length ? stakeholder.services : [makeService()]
-  );
+  const [services, setServices] = useState<StakeholderService[]>(() => stakeholder?.services ?? []);
 
   // Re-initialize from props each time the drawer opens (or the target changes
   // while open). Adjusting state during render avoids an extra effect pass.
@@ -94,7 +195,7 @@ function StakeholderDrawer({ open, stakeholder, isNew, onSave, onDelete, onClose
     setPrevSession({ open, stakeholder });
     if (open) {
       setName(stakeholder?.name ?? "");
-      setServices(stakeholder?.services?.length ? stakeholder.services : [makeService()]);
+      setServices(stakeholder?.services ?? []);
     }
   }
 
@@ -142,49 +243,56 @@ function StakeholderDrawer({ open, stakeholder, isNew, onSave, onDelete, onClose
                 <Plus className="h-3 w-3" /> Add
               </Button>
             </div>
-            {services.map((sv, idx) => (
-              <div key={sv.id} className="rounded-md border bg-muted/20 p-3 space-y-2">
-                <div className="flex items-start gap-2">
-                  <span className="text-xs text-muted-foreground shrink-0 mt-2.5 w-4">{idx + 1}.</span>
-                  <Input
-                    className="flex-1 text-sm"
-                    placeholder="Describe transaction or service..."
-                    value={sv.name}
-                    onChange={(e) => updateSvc(sv.id, "name", e.target.value)}
-                  />
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
-                    onClick={() => removeSvc(sv.id)}
-                    disabled={services.length <= 1}
+            <div className="rounded-md border divide-y">
+              {services.map((sv, idx) => (
+                <div key={sv.id} className="p-3 space-y-2">
+                  <div className="flex items-start gap-2">
+                    <span className="text-xs text-muted-foreground shrink-0 mt-2.5 w-4">{idx + 1}.</span>
+                    <Input
+                      className="flex-1 text-sm"
+                      placeholder="Describe transaction or service..."
+                      value={sv.name}
+                      onChange={(e) => updateSvc(sv.id, "name", e.target.value)}
+                    />
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
+                      onClick={() => removeSvc(sv.id)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap pl-6">
+                    <DirectionToggle
+                      value={sv.direction}
+                      onChange={(d) => updateSvc(sv.id, "direction", d)}
+                    />
+                  </div>
+                  <Select
+                    items={COMPLEXITY_OPTIONS}
+                    value={sv.complexity}
+                    onValueChange={(v: string | null) => v && updateSvc(sv.id, "complexity", v)}
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-                <Select
-                  items={COMPLEXITY_OPTIONS}
-                  value={sv.complexity}
-                  onValueChange={(v: string | null) => v && updateSvc(sv.id, "complexity", v)}
-                >
-                  <SelectTrigger className="h-8">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {COMPLEXITY_OPTIONS.map((o) => (
-                      <SelectItem key={o.value} value={o.value}>
-                        <span className="flex flex-col gap-0.5">
-                          <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${COMPLEXITY_COLORS[o.value]}`}>
-                            {o.label}
+                    <SelectTrigger className="h-8">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {COMPLEXITY_OPTIONS.map((o) => (
+                        <SelectItem key={o.value} value={o.value}>
+                          <span className="flex flex-col gap-0.5">
+                            <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${COMPLEXITY_COLORS[o.value]}`}>
+                              {o.label}
+                            </span>
+                            <span className="text-xs text-muted-foreground">{o.hint}</span>
                           </span>
-                          <span className="text-xs text-muted-foreground">{o.hint}</span>
-                        </span>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            ))}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -192,7 +300,7 @@ function StakeholderDrawer({ open, stakeholder, isNew, onSave, onDelete, onClose
           {!isNew ? (
             <ConfirmDeleteButton
               ariaLabel="Delete stakeholder"
-              confirmText="Delete stakeholder + services?"
+              confirmText="Delete stakeholder and its services?"
               onDelete={onDelete}
             />
           ) : <span />}
@@ -208,16 +316,76 @@ function StakeholderDrawer({ open, stakeholder, isNew, onSave, onDelete, onClose
   );
 }
 
+// ─── Read-only presentation of a stakeholder's services (principle 2) ────────
+// Edit lives in the row header (the always-visible pencil) — not duplicated
+// as a trailing button here. The All/Incoming/Outgoing filter is this card's
+// own, local state — see above.
+
+function StakeholderReadView({ services }: { services: StakeholderService[] }) {
+  // Per-stakeholder filter, local to this card — not a global view preference.
+  // Defaults to All each time a card first opens; persists across collapse/expand
+  // (the body stays mounted, just clipped by the grid animation).
+  const [filter, setFilter] = useState<DirectionFilter>("all");
+  const counts: Record<DirectionFilter, number> = {
+    all: services.length,
+    INCOMING: services.filter((sv) => sv.direction === "INCOMING").length,
+    OUTGOING: services.filter((sv) => sv.direction === "OUTGOING").length,
+  };
+  const visible = filter === "all" ? services : services.filter((sv) => sv.direction === filter);
+
+  return (
+    <div className="px-3 pb-3 pt-1 space-y-2">
+      {services.length === 0 ? (
+        <p className="text-sm text-muted-foreground italic">No transactions/services listed.</p>
+      ) : (
+        <>
+          <DirectionFilterTabs value={filter} counts={counts} onChange={setFilter} />
+          {visible.length === 0 ? (
+            <p className="text-sm text-muted-foreground italic py-2">
+              No {filter === "INCOMING" ? "incoming" : "outgoing"} transactions.
+            </p>
+          ) : (
+            <div className="rounded-md border divide-y">
+              {visible.map((sv) => (
+                <div key={sv.id} className="p-3 flex items-center gap-3 flex-wrap">
+                  <span className="flex-1 min-w-[10rem] text-sm">
+                    {sv.name || <span className="italic text-muted-foreground/60">Untitled transaction</span>}
+                  </span>
+                  <DirectionLabel direction={sv.direction} />
+                  <span className={`text-xs rounded px-1.5 py-0.5 font-medium shrink-0 ${COMPLEXITY_COLORS[sv.complexity]}`}>
+                    {sv.complexity}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // ─── View mode toggle ─────────────────────────────────────────────────────────
 
 const LS_KEY = "issp-part1c-view";
 
-type ViewMode = "table" | "cards" | "summary";
+type ViewMode = "table" | "list";
+
+/** Old localStorage values ("cards" / "summary") fold into the merged "list" mode. */
+function readStoredViewMode(): ViewMode {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (raw === "table") return "table";
+    if (raw === "list" || raw === "cards" || raw === "summary") return "list";
+    return "table";
+  } catch {
+    return "table";
+  }
+}
 
 const VIEW_OPTIONS: { mode: ViewMode; label: string; icon: React.ReactNode }[] = [
-  { mode: "table",   label: "Table",   icon: <Table2      className="h-3 w-3" /> },
-  { mode: "cards",   label: "Cards",   icon: <LayoutGrid  className="h-3 w-3" /> },
-  { mode: "summary", label: "Summary", icon: <LayoutList  className="h-3 w-3" /> },
+  { mode: "table", label: "Table", icon: <Table2     className="h-3 w-3" /> },
+  { mode: "list",  label: "List",  icon: <LayoutList className="h-3 w-3" /> },
 ];
 
 function ViewToggle({ mode, onChange }: { mode: ViewMode; onChange: (m: ViewMode) => void }) {
@@ -253,18 +421,24 @@ export function Part1CForm({ initialData }: Part1CFormProps) {
     }))
   );
 
-  const [viewMode, setViewMode] = useState<ViewMode>(() => {
-    try { return (localStorage.getItem(LS_KEY) as ViewMode) ?? "table"; } catch { return "table"; }
-  });
+  const [viewMode, setViewMode] = useState<ViewMode>(readStoredViewMode);
+
+  // Table view: one section-level switch. Defaults to read-only (principle 2:
+  // "default to viewing") — the whole grid becomes editable together, since a
+  // per-row toggle would fight the format's whole point (fast multi-row edits).
+  const [tableEditing, setTableEditing] = useState(false);
 
   const [drawer, setDrawer] = useState<{ open: boolean; id: string | null }>({
     open: false,
     id: null,
   });
 
-  const [openIds, setOpenIds] = useState<Set<string>>(
-    () => new Set(initialData.map((s) => s.id).filter(Boolean))
-  );
+  // List view: rows open collapsed by default (principle 2). Expanding shows a
+  // read-only view; editing is the explicit pencil in the row header, which
+  // opens the drawer above — that's the per-stakeholder "edit mode". Each
+  // expanded card carries its own All/Incoming/Outgoing filter (local state
+  // inside StakeholderReadView), not a global one.
+  const [openIds, setOpenIds] = useState<Set<string>>(() => new Set());
 
   function toggleOpen(id: string) {
     setOpenIds((prev) => {
@@ -294,7 +468,6 @@ export function Part1CForm({ initialData }: Part1CFormProps) {
   function addStakeholder() {
     const s = makeStakeholder();
     update([...stakeholders, s]);
-    setOpenIds((prev) => new Set([...prev, s.id]));
     revealNewItem(s.id);
   }
 
@@ -306,10 +479,10 @@ export function Part1CForm({ initialData }: Part1CFormProps) {
     update(stakeholders.map((s) => (s.id === id ? { ...s, name } : s)));
   }
 
-  function addService(stakeholderId: string) {
+  function addService(stakeholderId: string, direction: TransactionDirection = "") {
     update(
       stakeholders.map((s) =>
-        s.id === stakeholderId ? { ...s, services: [...s.services, makeService()] } : s
+        s.id === stakeholderId ? { ...s, services: [...s.services, { ...makeService(), direction }] } : s
       )
     );
   }
@@ -339,7 +512,7 @@ export function Part1CForm({ initialData }: Part1CFormProps) {
     );
   }
 
-  // ── Cards mode (drawer) actions ─────────────────────────────────────────────
+  // ── List mode (drawer) actions ──────────────────────────────────────────────
 
   const drawerIsNew = drawer.id === "new";
   const drawerStakeholder = drawerIsNew ? null : stakeholders.find((s) => s.id === drawer.id) ?? null;
@@ -351,6 +524,9 @@ export function Part1CForm({ initialData }: Part1CFormProps) {
   function handleDrawerSave(s: Stakeholder) {
     if (drawerIsNew) {
       update([...stakeholders, s]);
+      // Visible consequence: land on the new row, expanded, not off-screen.
+      setOpenIds((prev) => new Set([...prev, s.id]));
+      revealNewItem(s.id);
     } else {
       update(stakeholders.map((existing) => existing.id === s.id ? s : existing));
     }
@@ -362,6 +538,8 @@ export function Part1CForm({ initialData }: Part1CFormProps) {
     update(stakeholders.filter((s) => s.id !== drawer.id));
     closeDrawer();
   }
+
+  const canAddStakeholder = viewMode === "list" || tableEditing;
 
   return (
     <SectionShell
@@ -396,21 +574,37 @@ export function Part1CForm({ initialData }: Part1CFormProps) {
               <div className="hidden sm:block">
                 <ViewToggle mode={viewMode} onChange={switchMode} />
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={viewMode === "summary" ? openDrawerNew : addStakeholder}
-                className="gap-1.5"
-              >
-                <Plus className="h-4 w-4" />
-                Add Stakeholder
-              </Button>
+              {viewMode === "table" && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={() => setTableEditing((e) => !e)}
+                >
+                  {tableEditing ? "Done editing" : (<><Pencil className="h-3.5 w-3.5" />Edit table</>)}
+                </Button>
+              )}
+              {canAddStakeholder && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={viewMode === "list" ? openDrawerNew : addStakeholder}
+                  className="gap-1.5"
+                >
+                  <Plus className="h-4 w-4" />
+                  Add Stakeholder
+                </Button>
+              )}
             </div>
           </div>
         </CardHeader>
 
         <CardContent>
           {/* ── Table mode (desktop only) ─────────────────────────────────── */}
+          {/* Grouped by direction per stakeholder, matching the PDF's INCOMING:/OUTGOING:
+              layout — direction is a group label, not a per-row control, so it's set
+              once per group (via the group's own "Add" button, or a one-click "move"
+              for reclassifying) instead of repeating a 2-way toggle on every row. */}
           {viewMode === "table" && (
             <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-sm border-collapse">
@@ -420,140 +614,211 @@ export function Part1CForm({ initialData }: Part1CFormProps) {
                       Stakeholder / Client
                     </th>
                     <th className="border px-3 py-2 text-left font-semibold">
-                      Transaction / Service
+                      Transaction Processed
                     </th>
                     <th className="border px-3 py-2 text-left font-semibold w-44">
                       Complexity
                     </th>
-                    <th className="border px-3 py-2 w-10" />
+                    {tableEditing && <th className="border px-3 py-2 w-48" />}
                   </tr>
                 </thead>
                 <tbody>
                   {stakeholders.length === 0 && (
                     <tr>
-                      <td colSpan={4} className="border px-3 py-8 text-center text-muted-foreground text-sm">
-                        No stakeholders added yet.{" "}
-                        <button
-                          type="button"
-                          onClick={addStakeholder}
-                          className="font-medium text-primary hover:underline"
-                        >
-                          Add the first one.
-                        </button>
+                      <td colSpan={tableEditing ? 4 : 3} className="border px-3 py-8 text-center text-muted-foreground text-sm">
+                        {tableEditing ? (
+                          <>
+                            No stakeholders added yet.{" "}
+                            <button
+                              type="button"
+                              onClick={addStakeholder}
+                              className="font-medium text-primary hover:underline"
+                            >
+                              Add the first one.
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            No stakeholders added yet.{" "}
+                            <button
+                              type="button"
+                              onClick={() => setTableEditing(true)}
+                              className="font-medium text-primary hover:underline"
+                            >
+                              Turn on editing to add one.
+                            </button>
+                          </>
+                        )}
                       </td>
                     </tr>
                   )}
                   {stakeholders.map((s, sIdx) => {
-                    const hasServices = s.services.length > 0;
-                    const rowSpan = s.services.length + 1;
+                    const groups: { key: "INCOMING" | "OUTGOING" | "UNSPECIFIED"; label: string; items: StakeholderService[] }[] = [
+                      { key: "INCOMING", label: "Incoming", items: s.services.filter((sv) => sv.direction === "INCOMING") },
+                      { key: "OUTGOING", label: "Outgoing", items: s.services.filter((sv) => sv.direction === "OUTGOING") },
+                      { key: "UNSPECIFIED", label: "Unspecified", items: s.services.filter((sv) => sv.direction !== "INCOMING" && sv.direction !== "OUTGOING") },
+                    ];
+                    // Edit mode always offers Incoming/Outgoing (even empty, so there's
+                    // somewhere to add into); Unspecified only appears if it has content.
+                    // Read mode shows only groups that actually have something to show.
+                    const visibleGroups = groups.filter((g) =>
+                      tableEditing ? g.key !== "UNSPECIFIED" || g.items.length > 0 : g.items.length > 0
+                    );
+                    const dataColSpan = tableEditing ? 3 : 2;
+                    const totalRows = visibleGroups.reduce(
+                      (n, g) => n + 1 + g.items.length + (tableEditing && g.key !== "UNSPECIFIED" ? 1 : 0),
+                      0
+                    );
 
                     const nameCell = (span: number) => (
                       <td rowSpan={span} data-reveal-id={s.id} className="border px-2 py-2 align-top w-52">
-                        <div className="flex flex-col gap-2">
-                          <input
-                            type="text"
-                            className="w-full rounded px-2 py-1.5 text-sm bg-card/70 hover:bg-card focus:bg-card focus:outline-none focus:ring-1 focus:ring-ring"
-                            placeholder={`Stakeholder ${sIdx + 1}`}
-                            value={s.name}
-                            onChange={(e) => updateStakeholderName(s.id, e.target.value)}
-                          />
-                          <ConfirmDeleteButton
-                            ariaLabel="Remove stakeholder"
-                            confirmText="Delete stakeholder + services?"
-                            onDelete={() => removeStakeholder(s.id)}
-                            className="self-start"
-                            iconClassName="h-3 w-3"
-                          />
-                        </div>
+                        {tableEditing ? (
+                          <div className="flex flex-col gap-2">
+                            <input
+                              type="text"
+                              className="w-full rounded px-2 py-1.5 text-sm bg-card/70 hover:bg-card focus:bg-card focus:outline-none focus:ring-1 focus:ring-ring"
+                              placeholder={`Stakeholder ${sIdx + 1}`}
+                              value={s.name}
+                              onChange={(e) => updateStakeholderName(s.id, e.target.value)}
+                            />
+                            <ConfirmDeleteButton
+                              ariaLabel="Remove stakeholder"
+                              confirmText="Delete stakeholder and its services?"
+                              onDelete={() => removeStakeholder(s.id)}
+                              className="self-start"
+                              iconClassName="h-3 w-3"
+                            />
+                          </div>
+                        ) : (
+                          <span className="text-sm">
+                            {s.name || <span className="italic text-muted-foreground/60">Unnamed stakeholder</span>}
+                          </span>
+                        )}
                       </td>
                     );
 
+                    if (visibleGroups.length === 0) {
+                      // Read mode only — edit mode always has Incoming/Outgoing visible.
+                      return (
+                        <tr key={s.id} className={sIdx > 0 ? "border-t-2 border-t-border/60" : ""}>
+                          {nameCell(1)}
+                          <td colSpan={dataColSpan} className="border px-3 py-3 text-center">
+                            <span className="text-xs italic text-muted-foreground">No services listed.</span>
+                          </td>
+                        </tr>
+                      );
+                    }
+
                     return (
                       <Fragment key={s.id}>
-                        {!hasServices ? (
-                          <tr className={sIdx > 0 ? "border-t-2 border-t-border/60" : ""}>
-                            {nameCell(1)}
-                            <td colSpan={3} className="border px-3 py-3 text-center">
-                              <button
-                                type="button"
-                                onClick={() => addService(s.id)}
-                                className="flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 mx-auto"
-                              >
-                                <Plus className="h-3.5 w-3.5" />
-                                Add first service
-                              </button>
-                            </td>
-                          </tr>
-                        ) : (
-                          <>
-                            {s.services.map((sv, svIdx) => (
-                              <tr
-                                key={sv.id}
-                                className={svIdx === 0 && sIdx > 0 ? "border-t-2 border-t-border/60" : ""}
-                              >
-                                {svIdx === 0 && nameCell(rowSpan)}
-                                <td className="border px-2 py-1">
-                                  <input
-                                    type="text"
-                                    className="w-full rounded px-2 py-1.5 text-sm bg-card/70 hover:bg-card focus:bg-card focus:outline-none focus:ring-1 focus:ring-ring"
-                                    placeholder="Describe transaction / service..."
-                                    value={sv.name}
-                                    onChange={(e) => updateService(s.id, sv.id, "name", e.target.value)}
-                                  />
-                                </td>
-                                <td className="border px-2 py-1">
-                                  <Select
-                                    items={COMPLEXITY_OPTIONS}
-                                    value={sv.complexity}
-                                    onValueChange={(v: string | null) =>
-                                      v && updateService(s.id, sv.id, "complexity", v)
-                                    }
-                                  >
-                                    <SelectTrigger className="h-8 border-0 bg-card/70 shadow-none hover:bg-card focus:ring-1">
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      {COMPLEXITY_OPTIONS.map((o) => (
-                                        <SelectItem key={o.value} value={o.value}>
-                                          <span className="flex flex-col gap-0.5">
-                                            <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${COMPLEXITY_COLORS[o.value]}`}>
-                                              {o.label}
-                                            </span>
-                                            <span className="text-xs text-muted-foreground">{o.hint}</span>
-                                          </span>
-                                        </SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
-                                </td>
-                                <td className="border px-2 py-2 text-center">
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    aria-label="Remove service"
-                                    className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                                    onClick={() => removeService(s.id, sv.id)}
-                                    disabled={s.services.length <= 1}
-                                  >
-                                    <Trash2 className="h-3.5 w-3.5" />
-                                  </Button>
-                                </td>
-                              </tr>
-                            ))}
-                            <tr>
-                              <td colSpan={3} className="border px-3 py-1.5 bg-muted/20">
-                                <button
-                                  type="button"
-                                  onClick={() => addService(s.id)}
-                                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary"
-                                >
-                                  <Plus className="h-3 w-3" />
-                                  Add service
-                                </button>
+                        {visibleGroups.map((g, gi) => (
+                          <Fragment key={g.key}>
+                            <tr className={gi === 0 && sIdx > 0 ? "border-t-2 border-t-border/60" : ""}>
+                              {gi === 0 && nameCell(totalRows)}
+                              <td colSpan={dataColSpan} className="border px-3 py-1.5 bg-muted/40 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                {g.label}
                               </td>
                             </tr>
-                          </>
-                        )}
+                            {g.items.map((sv) => (
+                              <tr key={sv.id}>
+                                <td className="border px-2 py-1">
+                                  {tableEditing ? (
+                                    <input
+                                      type="text"
+                                      className="w-full rounded px-2 py-1.5 text-sm bg-card/70 hover:bg-card focus:bg-card focus:outline-none focus:ring-1 focus:ring-ring"
+                                      placeholder="Describe transaction / service..."
+                                      value={sv.name}
+                                      onChange={(e) => updateService(s.id, sv.id, "name", e.target.value)}
+                                    />
+                                  ) : (
+                                    <span className="px-2 py-1.5 block text-sm">
+                                      {sv.name || <span className="italic text-muted-foreground/60">Untitled transaction</span>}
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="border px-2 py-1">
+                                  {tableEditing ? (
+                                    <Select
+                                      items={COMPLEXITY_OPTIONS}
+                                      value={sv.complexity}
+                                      onValueChange={(v: string | null) =>
+                                        v && updateService(s.id, sv.id, "complexity", v)
+                                      }
+                                    >
+                                      <SelectTrigger className="h-8 border-0 bg-card/70 shadow-none hover:bg-card focus:ring-1">
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        {COMPLEXITY_OPTIONS.map((o) => (
+                                          <SelectItem key={o.value} value={o.value}>
+                                            <span className="flex flex-col gap-0.5">
+                                              <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${COMPLEXITY_COLORS[o.value]}`}>
+                                                {o.label}
+                                              </span>
+                                              <span className="text-xs text-muted-foreground">{o.hint}</span>
+                                            </span>
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                  ) : (
+                                    <span className={`inline-block text-xs rounded px-1.5 py-0.5 font-medium ${COMPLEXITY_COLORS[sv.complexity]}`}>
+                                      {sv.complexity}
+                                    </span>
+                                  )}
+                                </td>
+                                {tableEditing && (
+                                  <td className="border px-2 py-1">
+                                    <div className="flex items-center justify-center gap-1">
+                                      {g.key === "UNSPECIFIED" ? (
+                                        <DirectionToggle
+                                          value={sv.direction}
+                                          onChange={(d) => updateService(s.id, sv.id, "direction", d)}
+                                        />
+                                      ) : (
+                                        <Button
+                                          variant="ghost"
+                                          size="icon"
+                                          aria-label={g.key === "INCOMING" ? "Move to Outgoing" : "Move to Incoming"}
+                                          title={g.key === "INCOMING" ? "Move to Outgoing" : "Move to Incoming"}
+                                          className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                                          onClick={() => updateService(s.id, sv.id, "direction", g.key === "INCOMING" ? "OUTGOING" : "INCOMING")}
+                                        >
+                                          {g.key === "INCOMING"
+                                            ? <ArrowUpFromLine className="h-3.5 w-3.5" />
+                                            : <ArrowDownToLine className="h-3.5 w-3.5" />}
+                                        </Button>
+                                      )}
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        aria-label="Remove service"
+                                        className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                                        onClick={() => removeService(s.id, sv.id)}
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      </Button>
+                                    </div>
+                                  </td>
+                                )}
+                              </tr>
+                            ))}
+                            {tableEditing && g.key !== "UNSPECIFIED" && (
+                              <tr>
+                                <td colSpan={dataColSpan} className="border px-3 py-1.5 bg-muted/20">
+                                  <button
+                                    type="button"
+                                    onClick={() => addService(s.id, g.key as "INCOMING" | "OUTGOING")}
+                                    className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary"
+                                  >
+                                    <Plus className="h-3 w-3" />
+                                    Add {g.label.toLowerCase()} service
+                                  </button>
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
+                        ))}
                       </Fragment>
                     );
                   })}
@@ -562,219 +827,92 @@ export function Part1CForm({ initialData }: Part1CFormProps) {
             </div>
           )}
 
-          {/* ── Cards mode (all screens) + mobile fallback ────────────────── */}
-          {/* Shows when: viewMode === "cards" on any screen, OR on mobile for any mode */}
-          <div className={viewMode === "cards" ? "block" : "md:hidden"}>
-            <div className="space-y-2">
-              {stakeholders.length === 0 && (
-                <div className="rounded-lg border border-dashed bg-muted/30 py-8 text-center">
-                  <p className="text-sm text-muted-foreground">
-                    No stakeholders yet.{" "}
-                    <button
-                      type="button"
-                      onClick={addStakeholder}
-                      className="font-medium text-primary hover:underline"
-                    >
-                      Add one.
-                    </button>
-                  </p>
-                </div>
-              )}
-              {stakeholders.map((s, sIdx) => {
-                const isOpen = openIds.has(s.id);
-                return (
-                  <div key={s.id} data-reveal-id={s.id} className="rounded-lg border overflow-hidden">
-                    {/* Accordion header */}
-                    <div className="flex items-center gap-2 px-3 py-2.5 bg-muted/20">
-                      <span className="text-xs text-muted-foreground shrink-0 w-5 tabular-nums">
-                        {sIdx + 1}
-                      </span>
-                      <Input
-                        placeholder="e.g., Citizens, Businesses"
-                        value={s.name}
-                        className="flex-1 h-8 text-sm"
-                        onClick={(e) => e.stopPropagation()}
-                        onChange={(e) => updateStakeholderName(s.id, e.target.value)}
-                      />
-                      {/* Collapsed summary badges */}
-                      {!isOpen && s.services.length > 0 && (
-                        <div className="hidden sm:flex gap-1 shrink-0">
-                          {s.services.slice(0, 2).map((sv) => (
-                            <span
-                              key={sv.id}
-                              className={`text-xs rounded px-1.5 py-0.5 font-medium ${COMPLEXITY_COLORS[sv.complexity]}`}
-                            >
-                              {sv.complexity === "Highly Technical" ? "H.Tech" : sv.complexity}
-                            </span>
-                          ))}
-                          {s.services.length > 2 && (
-                            <span className="text-xs rounded px-1.5 py-0.5 font-medium bg-muted text-muted-foreground">
-                              +{s.services.length - 2}
-                            </span>
-                          )}
-                        </div>
-                      )}
-                      {!isOpen && (
-                        <span className="text-xs text-muted-foreground shrink-0 hidden sm:block">
-                          {s.services.length} svc
-                        </span>
-                      )}
-                      <button
-                        type="button"
-                        aria-label={isOpen ? "Collapse" : "Expand"}
-                        onClick={() => toggleOpen(s.id)}
-                        className="h-7 w-7 shrink-0 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-                      >
-                        <ChevronDown
-                          className={`h-4 w-4 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}
-                        />
-                      </button>
-                      <ConfirmDeleteButton
-                        ariaLabel="Remove stakeholder"
-                        confirmText="Delete?"
-                        onDelete={() => removeStakeholder(s.id)}
-                      />
-                    </div>
-
-                    {/* Accordion body */}
-                    <div
-                      className={`grid transition-all duration-200 ease-in-out ${
-                        isOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
-                      }`}
-                    >
-                      <div className="overflow-hidden">
-                        <div className="px-3 pt-3 pb-3 space-y-2 border-t">
-                          <Label className="text-xs font-medium text-muted-foreground">
-                            Transactions / Services
-                          </Label>
-                          {s.services.map((sv) => (
-                            <div key={sv.id} className="rounded-md border bg-muted/20 p-3 space-y-2">
-                              <div className="flex items-center gap-2">
-                                <Input
-                                  className="flex-1 text-sm"
-                                  placeholder="Describe transaction or service..."
-                                  value={sv.name}
-                                  onChange={(e) => updateService(s.id, sv.id, "name", e.target.value)}
-                                />
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
-                                  onClick={() => removeService(s.id, sv.id)}
-                                  disabled={s.services.length <= 1}
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </Button>
-                              </div>
-                              <Select
-                                items={COMPLEXITY_OPTIONS}
-                                value={sv.complexity}
-                                onValueChange={(v: string | null) =>
-                                  v && updateService(s.id, sv.id, "complexity", v)
-                                }
-                              >
-                                <SelectTrigger><SelectValue /></SelectTrigger>
-                                <SelectContent>
-                                  {COMPLEXITY_OPTIONS.map((o) => (
-                                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                          ))}
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => addService(s.id)}
-                            className="w-full gap-1.5 text-xs text-muted-foreground"
-                          >
-                            <Plus className="h-3.5 w-3.5" />
-                            Add service
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* ── Summary mode (desktop only) ────────────────────────────────── */}
-          {viewMode === "summary" && (
-            <div className="hidden md:block">
-              {stakeholders.length === 0 ? (
-                <div className="rounded-lg border border-dashed bg-muted/30 py-10 text-center">
-                  <p className="text-sm text-muted-foreground">
-                    No stakeholders yet.{" "}
-                    <button
-                      type="button"
-                      onClick={openDrawerNew}
-                      className="font-medium text-primary hover:underline"
-                    >
-                      Add the first one.
-                    </button>
-                  </p>
-                </div>
-              ) : (
-                <div className="rounded-md border overflow-hidden">
-                  <div className="divide-y">
-                    {stakeholders.map((s, sIdx) => (
-                      <div
-                        key={s.id}
-                        className="flex items-center gap-3 px-4 py-3 hover:bg-muted/30 group cursor-pointer transition-colors"
-                        onClick={() => openDrawerEdit(s.id)}
-                      >
-                        <span className="text-xs text-muted-foreground w-5 shrink-0 tabular-nums">
+          {/* ── List mode (all screens) + mobile fallback for Table ─────────── */}
+          {/* Shows when: viewMode === "list" on any screen, OR on mobile for Table mode */}
+          <div className={viewMode === "list" ? "block" : "md:hidden"}>
+            {stakeholders.length === 0 ? (
+              <div className="rounded-lg border border-dashed bg-muted/30 py-8 text-center">
+                <p className="text-sm text-muted-foreground">
+                  No stakeholders yet.{" "}
+                  <button
+                    type="button"
+                    onClick={openDrawerNew}
+                    className="font-medium text-primary hover:underline"
+                  >
+                    Add one.
+                  </button>
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {stakeholders.map((s, sIdx) => {
+                  const isOpen = openIds.has(s.id);
+                  return (
+                    <div key={s.id} data-reveal-id={s.id} className="rounded-lg border overflow-hidden">
+                      {/* Row header — read-only identity + expand affordance (principle 2).
+                          Deliberately no badges/chips here: same plain row on every screen
+                          size, detail only appears once expanded. The pencil is the single
+                          edit affordance — no duplicate button inside the expanded view. */}
+                      <div className="flex items-center gap-2 px-3 py-2.5 bg-muted/20">
+                        <span className="text-xs text-muted-foreground shrink-0 w-5 tabular-nums">
                           {sIdx + 1}
                         </span>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium line-clamp-2 break-words">
-                            {s.name || (
-                              <span className="italic text-muted-foreground/60">
-                                Unnamed stakeholder
-                              </span>
-                            )}
-                          </p>
-                          <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                            {s.services.length} service{s.services.length !== 1 ? "s" : ""}
-                            {s.services[0]?.name ? ` · ${s.services[0].name}` : ""}
-                          </p>
-                        </div>
-                        <div className="flex gap-1 shrink-0 flex-wrap justify-end max-w-40">
-                          {s.services.slice(0, 3).map((sv) => (
-                            <span
-                              key={sv.id}
-                              className={`text-xs rounded px-1.5 py-0.5 font-medium ${COMPLEXITY_COLORS[sv.complexity]}`}
-                            >
-                              {sv.complexity === "Highly Technical" ? "H.Tech" : sv.complexity}
-                            </span>
-                          ))}
-                          {s.services.length > 3 && (
-                            <span className="text-xs rounded px-1.5 py-0.5 font-medium bg-muted text-muted-foreground">
-                              +{s.services.length - 3}
-                            </span>
-                          )}
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => toggleOpen(s.id)}
+                          className="flex-1 min-w-0 flex items-center gap-2 text-left"
+                        >
+                          <span className="text-sm font-medium truncate">
+                            {s.name || <span className="italic text-muted-foreground/60">Unnamed stakeholder</span>}
+                          </span>
+                        </button>
+                        <span className="text-xs text-muted-foreground shrink-0">
+                          {s.services.length} service{s.services.length !== 1 ? "s" : ""}
+                        </span>
                         <button
                           type="button"
                           aria-label="Edit stakeholder"
-                          className="h-7 w-7 shrink-0 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent opacity-0 group-hover:opacity-100 transition-all"
-                          onClick={(e) => { e.stopPropagation(); openDrawerEdit(s.id); }}
+                          title="Edit stakeholder"
+                          onClick={() => openDrawerEdit(s.id)}
+                          className="h-7 w-7 shrink-0 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
                         >
                           <Pencil className="h-3.5 w-3.5" />
                         </button>
+                        <button
+                          type="button"
+                          aria-label={isOpen ? "Collapse" : "Expand"}
+                          onClick={() => toggleOpen(s.id)}
+                          className="h-7 w-7 shrink-0 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                        >
+                          <ChevronDown
+                            className={`h-4 w-4 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}
+                          />
+                        </button>
                       </div>
-                    ))}
+
+                      {/* Expanded body — read view only; editing happens in the drawer.
+                          The read view carries its own All/Incoming/Outgoing filter. */}
+                      <div
+                        className={`grid transition-all duration-200 ease-in-out ${
+                          isOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+                        }`}
+                      >
+                        <div className="overflow-hidden">
+                          <div className="border-t">
+                            <StakeholderReadView services={s.services} />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                      );
+                    })}
                   </div>
-                </div>
-              )}
-            </div>
-          )}
+                )}
+          </div>
         </CardContent>
       </Card>
 
-      {/* Drawer — only used in Summary mode */}
+      {/* Drawer — the single edit surface for List view */}
       <StakeholderDrawer
         open={drawer.open}
         stakeholder={drawerStakeholder}
