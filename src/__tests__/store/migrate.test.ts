@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { migrateLegacyDoc, docContentHash } from "@/lib/store/index";
 import { createEmptyDocument } from "@/lib/store/defaults";
+import { CURRENT_SCHEMA_VERSION } from "@/lib/migration-review";
 import type { IsspDocument } from "@/lib/store/types";
 import type { NewDocOptions } from "@/lib/store/defaults";
 
@@ -46,10 +47,10 @@ describe("migrateLegacyDoc", () => {
     expect(migrated.sectionMeta).toBeDefined();
   });
 
-  it("upgrades to schemaVersion 3", () => {
+  it("upgrades a v1 doc all the way to the current schema version", () => {
     const v1 = makeLegacyV1Doc();
     const migrated = migrateLegacyDoc(v1);
-    expect(migrated.schemaVersion).toBe(3);
+    expect(migrated.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
   });
 
   it("migrates legacy stakeholder (transactions+complexity) to services array", () => {

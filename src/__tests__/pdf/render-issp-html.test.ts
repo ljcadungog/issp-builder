@@ -2,11 +2,14 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
-  renderIsspHtml,
+  renderContentHtml,
+  renderFrontMatterHtml,
+  getTocEntries,
   php,
   total,
   sumLines,
   ooLabel,
+  type IsspData,
   type LineItem,
 } from "@/lib/pdf/render-issp-html";
 import { toRenderData } from "@/lib/pdf/to-render-data";
@@ -35,34 +38,68 @@ function lineItem(qty: number, unitCost: number): LineItem {
   return { id: "x", item: "Server", office: "ICTU", uacsCode: "", uacsLabel: "", fundSource: "GAA", qty, unitCost };
 }
 
-describe("renderIsspHtml — full demo document", () => {
-  const html = renderIsspHtml(toRenderData(loadDemoDoc()));
+/**
+ * The renderer emits the ISSP as two standalone HTML documents, exactly as
+ * `src/app/api/export/route.ts` drives it: front matter (cover / TOC /
+ * definitions) is printed separately so Chromium's page counter restarts at 1
+ * on Part I. This helper mirrors that composition so the tests exercise the
+ * same pairing production does.
+ */
+function renderDocumentParts(issp: IsspData) {
+  return {
+    front: renderFrontMatterHtml(issp, null),
+    content: renderContentHtml(issp),
+  };
+}
 
-  it("returns a complete HTML document", () => {
-    expect(typeof html).toBe("string");
-    expect(html.startsWith("<!DOCTYPE html>")).toBe(true);
-    expect(html.length).toBeGreaterThan(5000);
+describe("render — full demo document", () => {
+  const issp = toRenderData(loadDemoDoc());
+  const { front, content } = renderDocumentParts(issp);
+
+  it("emits two complete HTML documents", () => {
+    for (const [name, html] of [["front", front], ["content", content]] as const) {
+      expect(typeof html, name).toBe("string");
+      expect(html.startsWith("<!DOCTYPE html>"), name).toBe(true);
+      expect(html.trimEnd().endsWith("</html>"), name).toBe(true);
+    }
+    expect(content.length).toBeGreaterThan(5000);
   });
 
   it("includes the agency acronym and a section heading", () => {
-    expect(html).toContain("NCWTR");
-    // Definitions/TOC and all four parts should be present
-    expect(html).toContain("PART I");
+    // Cover page carries the agency; the TOC carries the uppercase part labels.
+    expect(front).toContain("NCWTR");
+    expect(front).toContain("PART I. AGENCY PROFILE");
+    // The four part headings themselves live in the content document
+    // (title-cased in the markup, uppercased by CSS at print time).
+    expect(content).toContain("Part I. Agency Profile");
+    expect(content).toContain("Part II. Current ICT Assessment");
+    expect(content).toContain("Part III. Proposed ICT Strategy");
+    expect(content).toContain("Part IV. Resource Requirements");
   });
 
   it("renders formatted peso amounts from Part IV budgets", () => {
-    expect(html).toMatch(/₱|PHP|\d,\d{3}\.\d{2}/);
+    expect(content).toMatch(/₱|PHP|\d,\d{3}\.\d{2}/);
+  });
+
+  it("every TOC entry has a matching anchor in one of the two documents", () => {
+    const entries = getTocEntries(issp);
+    expect(entries.length).toBeGreaterThan(0);
+    for (const entry of entries) {
+      expect(front.includes(entry.id) || content.includes(entry.id), entry.id).toBe(true);
+    }
   });
 });
 
-describe("renderIsspHtml — empty document", () => {
+describe("render — empty document", () => {
   it("renders without throwing for a freshly created doc", () => {
     const doc = createEmptyDocument(BASE_OPTS);
-    let html = "";
+    let front = "";
+    let content = "";
     expect(() => {
-      html = renderIsspHtml(toRenderData(doc));
+      ({ front, content } = renderDocumentParts(toRenderData(doc)));
     }).not.toThrow();
-    expect(html).toContain("Empty Smoke-Test ISSP");
+    expect(front).toContain("Empty Smoke-Test ISSP");
+    expect(content).toContain("Empty Smoke-Test ISSP");
   });
 });
 

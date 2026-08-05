@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createEmptyDocument, makeDefaultPart1, makeDefaultPart2, makeDefaultPart3, makeDefaultPart4 } from "@/lib/store/defaults";
 import type { NewDocOptions } from "@/lib/store/defaults";
+import { CURRENT_SCHEMA_VERSION } from "@/lib/migration-review";
 
 const BASE_OPTS: NewDocOptions = {
   title: "Test ISSP 2028-2030",
@@ -31,11 +32,12 @@ describe("createEmptyDocument", () => {
     expect(doc.agency.acronym).toBe("TA");
   });
 
-  it("initialises with schemaVersion 2", () => {
-    // createEmptyDocument predates the v3 stakeholder migration; new docs start at v2
-    // and migrateLegacyDoc upgrades them on first load.
+  it("initialises at the current schema version", () => {
+    // New docs are born current, so migrateLegacyDoc is a no-op on first load.
+    // Asserted against the exported constant, never a literal — a hardcoded
+    // number here silently rots every time the schema is bumped.
     const doc = createEmptyDocument(BASE_OPTS);
-    expect(doc.schemaVersion).toBe(2);
+    expect(doc.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
   });
 
   it("sets planStatus to draft", () => {
@@ -81,12 +83,21 @@ describe("createEmptyDocument", () => {
     expect(c.other.mfa).toBe(false);
   });
 
-  it("part2 egpChecklist defaults all to not_utilizing", () => {
+  it("part2 egpChecklist defaults every program to unanswered", () => {
+    // Schema v7 retired the utilizing/not_utilizing/proposed/not_applicable
+    // vocabulary for the template's strict Yes/No; "" means "not yet answered".
     const doc = createEmptyDocument(BASE_OPTS);
     const egp = doc.part2.egpChecklist;
-    expect(egp.eGovPay.status).toBe("not_utilizing");
-    expect(egp.pnpki.status).toBe("not_utilizing");
-    expect(egp.hcmis.status).toBe("not_utilizing");
+    expect(egp.eGovPay.status).toBe("");
+    expect(egp.pnpki.status).toBe("");
+    expect(egp.hcmis.status).toBe("");
+    // No program may start pre-answered.
+    for (const [key, prog] of Object.entries(egp)) {
+      expect(prog, `egpChecklist.${key}`).toBeDefined();
+      expect(prog!.status, `egpChecklist.${key}.status`).toBe("");
+    }
+    // eLGU is LGU-only and is not seeded for a fresh doc.
+    expect(egp.elgu).toBeUndefined();
   });
 
   it("part3 has null diagram fields", () => {

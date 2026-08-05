@@ -274,7 +274,9 @@ function hasCyberContent(c: CyberControls): boolean {
 }
 
 function hasEgpContent(egp: EgpChecklist): boolean {
-  return Object.values(egp).some((p) => p.status !== "");
+  // `elgu` is optional and the v7/v8 migration steps write it back as an explicit
+  // `undefined` for non-LGU docs, so Object.values() can contain holes.
+  return Object.values(egp).some((p) => !!p && p.status !== "");
 }
 
 function hasYearContent(year: YearBudget): boolean {
@@ -681,7 +683,7 @@ export function migrateLegacyDoc(doc: IsspDocument): IsspDocument {
  * Keeps affirmative userMarkedDone state but drops lastEditedAt / updatedAt / exportedAt
  * and default-false metadata entries created by transient edits.
  */
-function docContentHash(doc: IsspDocument): string {
+export function docContentHash(doc: IsspDocument): string {
   const { sectionMeta } = doc;
   const metaStripped = sectionMeta
     ? Object.fromEntries(

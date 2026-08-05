@@ -3,6 +3,7 @@ import {
   PARTS,
   ALL_SECTIONS,
   TOTAL_SECTIONS,
+  FRONT_MATTER_SECTIONS,
   computeStatus,
   computePartStatus,
   findContinueTarget,
@@ -13,9 +14,18 @@ const edited = { userMarkedDone: false, lastEditedAt: "2026-01-01T00:00:00.000Z"
 const empty = { userMarkedDone: false, lastEditedAt: null };
 
 describe("PARTS / ALL_SECTIONS", () => {
-  it("has 18 total sections", () => {
-    expect(TOTAL_SECTIONS).toBe(18);
-    expect(ALL_SECTIONS).toHaveLength(18);
+  it("TOTAL_SECTIONS agrees with ALL_SECTIONS and PARTS", () => {
+    // Deliberately no literal: the count changes whenever a section is added,
+    // and a hardcoded number only ever rots into a false failure. What must
+    // hold is that the three derived views stay consistent with each other.
+    expect(ALL_SECTIONS).toHaveLength(TOTAL_SECTIONS);
+    // ALL_SECTIONS = front-matter sections + every part's sections (annexes excluded).
+    expect(FRONT_MATTER_SECTIONS.length + PARTS.flatMap((p) => p.sections).length).toBe(
+      TOTAL_SECTIONS
+    );
+    expect(TOTAL_SECTIONS).toBeGreaterThan(0);
+    // Every section id is unique.
+    expect(new Set(ALL_SECTIONS.map((s) => s.id)).size).toBe(TOTAL_SECTIONS);
   });
 
   it("marks part4/summary as the only read-only section", () => {

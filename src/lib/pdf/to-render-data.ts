@@ -1,4 +1,14 @@
 import type { IsspData } from "@/lib/pdf/render-issp-html";
+import { computeProjectCosts } from "@/components/issp-editor/part4/part4-aggregations";
+import {
+  CLASSIFICATION_LABELS,
+  DEV_STRATEGY_LABELS,
+  DATA_STORAGE_LABELS,
+  FRONTLINE_ACCESS_LABELS,
+  EMPLOYMENT_STATUS_LABELS,
+  PROPOSED_STATUS_LABELS,
+  labelFor,
+} from "@/lib/issp-labels";
 import type {
   IsspDocument,
   IctProject,
@@ -41,7 +51,7 @@ const SA_KNOWN = [
   "Program Convergence Budgeting",
 ] as const;
 
-function mapProject(proj: IctProject, crossAgency = false): IsspData["part3"]["internalProjects"][number] {
+function mapProject(proj: IctProject, crossAgency: boolean, totalProjectCost: number): IsspData["part3"]["internalProjects"][number] {
   const saArr = proj.strategicAlignment ?? [];
   const haArr = proj.harmonizationFramework ?? [];
 
@@ -50,7 +60,9 @@ function mapProject(proj: IctProject, crossAgency = false): IsspData["part3"]["i
     nationalCybersecurity: saArr.includes("National Cybersecurity Plan"),
     eGovMasterPlan: saArr.includes("E-Government Master Plan"),
     convergenceBudgeting: saArr.includes("Program Convergence Budgeting"),
-    others: saArr.find((s) => !(SA_KNOWN as readonly string[]).includes(s)) ?? "",
+    // "Others" is a checkbox sentinel; any other unknown string is the specify-text
+    others: saArr.find((s) => !(SA_KNOWN as readonly string[]).includes(s) && s !== "Others") ?? "",
+    othersChecked: saArr.includes("Others"),
   };
 
   const harmonization: Record<string, boolean> = {
@@ -75,7 +87,7 @@ function mapProject(proj: IctProject, crossAgency = false): IsspData["part3"]["i
     year2Deliverables: proj.year2Deliverables,
     year3Deliverables: proj.year3Deliverables,
     implementingUnit: proj.implementingUnit,
-    totalProjectCost: proj.totalProjectCost,
+    totalProjectCost,
     fundingSource: proj.fundingSource,
     ...(crossAgency && {
       leadAgency: proj.leadAgency,
@@ -95,11 +107,15 @@ function mapKpiRow(row: KpiRow) {
   };
 }
 
-function mapPerformanceFramework(pf: PerformanceFramework): IsspData["part3"]["performanceFramework"] {
+function mapPerformanceFramework(
+  pf: PerformanceFramework,
+  titleById: Map<string, string>
+): IsspData["part3"]["performanceFramework"] {
   const result: IsspData["part3"]["performanceFramework"] = {};
   for (const [key, entry] of Object.entries(pf)) {
     result[key] = {
-      projectTitle: entry.projectTitle,
+      // Stored titles are a point-in-time copy; the live project title (by id) wins
+      projectTitle: titleById.get(key) ?? entry.projectTitle,
       projectType: entry.projectCategory,
       rows: entry.rows.map(mapKpiRow),
     };
@@ -111,14 +127,18 @@ function mapEgpChecklist(checklist: EgpChecklist): IsspData["part2"]["egpCheckli
   const result: IsspData["part2"]["egpChecklist"] = {};
   for (const [key, prog] of Object.entries(checklist)) {
     if (!prog) continue;
-    const utilizing = prog.status === "utilizing";
-    result[key] = { utilizing, proposed: prog.status === "proposed" };
-    if (key === "pnpki" && "adoptionPercentage" in prog) {
-      result[key].adoptionPercentage = (prog as typeof prog & { adoptionPercentage?: number }).adoptionPercentage ?? 0;
-    }
-    if (key === "recordsMgmt" || key === "pscp") {
-      result[key].exists = utilizing;
-    }
+    const p = prog as EgpChecklist["onlinePortal"] & { adoptionPercentage?: number };
+    result[key] = {
+      status: p.status ?? "",
+      url: p.url,
+      equivalentName: p.equivalentName,
+      equivalentUrl: p.equivalentUrl,
+      adoptionPercentage: p.adoptionPercentage,
+      channels: p.channels,
+      ifNo: p.ifNo,
+      mechanisms: p.mechanisms,
+      connectedToPortal: p.connectedToPortal,
+    };
   }
   return result;
 }
@@ -129,6 +149,16 @@ export function toRenderData(doc: IsspDocument): IsspData {
   const { agency, part1, part2, part3, part4 } = doc;
 
   const outcomeMap = Object.fromEntries(part1.orgOutcomes.map((o) => [o.id, o.name]));
+  const projectTitleById = new Map<string, string>(
+    [...part3.internalProjects, ...part3.crossAgencyProjects].map((p) => [p.id, p.title])
+  );
+  // Total project cost is derived from Part IV resource requirements, never stored
+  const internalCosts = computeProjectCosts(part4, "internalProjects");
+  const crossAgencyCosts = computeProjectCosts(part4, "crossAgencyProjects");
+  // "Concurrently held by CIO" — derive focal fields from CIO so they can't go stale
+  const focal = part1.focalSameAsCio
+    ? { name: part1.cioName, position: part1.cioPosition, unit: part1.cioUnit, email: part1.cioEmail, contact: part1.cioContact }
+    : { name: part1.focalName, position: part1.focalPosition, unit: part1.focalUnit, email: part1.focalEmail, contact: part1.focalContact };
 
   return {
     title: doc.title,
@@ -147,6 +177,8 @@ export function toRenderData(doc: IsspDocument): IsspData {
       logoSrc: agency.logoBase64 || null,
     },
 
+    definitions: doc.definitions?.map((d) => ({ term: d.term, definition: d.definition })),
+
     part1: {
       legalBasis: part1.legalBasis,
       mandateFunction: part1.mandateFunction,
@@ -158,11 +190,11 @@ export function toRenderData(doc: IsspDocument): IsspData {
       cioUnit: part1.cioUnit,
       cioEmail: part1.cioEmail,
       cioContact: part1.cioContact,
-      focalName: part1.focalName,
-      focalPosition: part1.focalPosition,
-      focalUnit: part1.focalUnit,
-      focalEmail: part1.focalEmail,
-      focalContact: part1.focalContact,
+      focalName: focal.name,
+      focalPosition: focal.position,
+      focalUnit: focal.unit,
+      focalEmail: focal.email,
+      focalContact: focal.contact,
       humanCapital: part1.humanCapital,
       stakeholders: part1.stakeholders,
     },
@@ -179,17 +211,17 @@ export function toRenderData(doc: IsspDocument): IsspData {
       cybersecurityControls: part2.cybersecurityControls as unknown as IsspData["part2"]["cybersecurityControls"],
       informationSystems: part2.informationSystems.map((sys) => ({
         name: sys.name,
-        classification: sys.classification,
+        classification: labelFor(CLASSIFICATION_LABELS, sys.classification),
         frontline: sys.frontline,
-        deploymentType: sys.frontlineAccessType || undefined,
+        frontlineAccessType: labelFor(FRONTLINE_ACCESS_LABELS, sys.frontlineAccessType) || undefined,
         url: sys.url || undefined,
         description: sys.description,
-        developmentStrategy: sys.developmentStrategy || undefined,
+        developmentStrategy: labelFor(DEV_STRATEGY_LABELS, sys.developmentStrategy) || undefined,
         developmentPlatform: sys.developmentPlatform || undefined,
         databaseName: sys.databaseName || undefined,
-        dataStorage: sys.dataStorage || undefined,
-        internalUsers: String(sys.internalUsers ?? ""),
-        externalUsers: String(sys.externalUsers ?? ""),
+        dataStorage: labelFor(DATA_STORAGE_LABELS, sys.dataStorage) || undefined,
+        internalUsers: sys.internalUsers ?? "",
+        externalUsers: sys.externalUsers ?? "",
         owner: sys.owner || undefined,
         interoperability: {
           integrated: sys.interoperability.integrated,
@@ -218,21 +250,22 @@ export function toRenderData(doc: IsspDocument): IsspData {
       enterpriseArchDataUrl: part3.enterpriseArchDataUrl,
       proposedHumanCapital: part3.proposedHumanCapital.map((r) => ({
         position: r.position,
-        employmentStatus: r.employmentStatus,
+        employmentStatus: labelFor(EMPLOYMENT_STATUS_LABELS, r.employmentStatus),
         physicalCount: r.quantity,
       })),
       proposedSystems: part3.proposedSystems.map((sys) => ({
         name: sys.name,
-        classification: sys.classification,
+        classification: labelFor(CLASSIFICATION_LABELS, sys.classification),
         frontline: sys.frontline,
-        deploymentType: sys.frontlineAccessType || undefined,
-        description: sys.enhancementDetails || "",
-        developmentStrategy: sys.developmentStrategy || undefined,
+        frontlineAccessType: labelFor(FRONTLINE_ACCESS_LABELS, sys.frontlineAccessType) || undefined,
+        url: sys.url || undefined,
+        description: sys.description || sys.enhancementDetails || "",
+        developmentStrategy: labelFor(DEV_STRATEGY_LABELS, sys.developmentStrategy) || undefined,
         developmentPlatform: sys.developmentPlatform || undefined,
         databaseName: sys.databaseName || undefined,
-        dataStorage: sys.dataStorage || undefined,
-        internalUsers: String(sys.internalUsers ?? ""),
-        externalUsers: String(sys.externalUsers ?? ""),
+        dataStorage: labelFor(DATA_STORAGE_LABELS, sys.dataStorage) || undefined,
+        internalUsers: sys.internalUsers ?? "",
+        externalUsers: sys.externalUsers ?? "",
         owner: sys.owner || undefined,
         interoperability: {
           integrated: sys.interoperability.integrated,
@@ -242,16 +275,18 @@ export function toRenderData(doc: IsspDocument): IsspData {
           externalSystems: sys.interoperability.externalSystems
             ? [sys.interoperability.externalSystems]
             : [],
+          generatesData: sys.interoperability.generatesData,
+          processesExternalData: sys.interoperability.processesExternalData,
+          sharedPlatform: sys.interoperability.sharedPlatform,
         },
         pia: {
           processesPersonalInfo: sys.pia.processesPersonalInfo,
-          piaCompleted: sys.pia.piaRequired ?? null,
         },
-        status: sys.status || undefined,
+        status: labelFor(PROPOSED_STATUS_LABELS, sys.status) || undefined,
       })),
-      internalProjects: part3.internalProjects.map((p) => mapProject(p, false)),
-      crossAgencyProjects: part3.crossAgencyProjects.map((p) => mapProject(p, true)),
-      performanceFramework: mapPerformanceFramework(part3.performanceFramework),
+      internalProjects: part3.internalProjects.map((p) => mapProject(p, false, internalCosts[p.id] ?? 0)),
+      crossAgencyProjects: part3.crossAgencyProjects.map((p) => mapProject(p, true, crossAgencyCosts[p.id] ?? 0)),
+      performanceFramework: mapPerformanceFramework(part3.performanceFramework, projectTitleById),
     },
 
     part4: {
