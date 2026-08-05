@@ -72,7 +72,10 @@ describe("migrateLegacyDoc", () => {
 
   it("preserves existing services array if already v3 shape", () => {
     const doc = createEmptyDocument(BASE_OPTS);
-    doc.part1.stakeholders = [
+    // A genuine v3 service has no `direction` — that field only arrives in v10 —
+    // so the fixture is deliberately cast to the legacy shape.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (doc.part1.stakeholders as any) = [
       { id: "s1", name: "Citizens", services: [{ id: "sv1", name: "Licensing", complexity: "Complex" }] },
     ];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -81,6 +84,8 @@ describe("migrateLegacyDoc", () => {
     const migrated = migrateLegacyDoc(doc);
     expect(migrated.part1.stakeholders[0].services[0].name).toBe("Licensing");
     expect(migrated.part1.stakeholders[0].services[0].complexity).toBe("Complex");
+    // v9 -> v10 backfills an unset direction rather than dropping the service.
+    expect(migrated.part1.stakeholders[0].services[0].direction).toBe("");
   });
 
   it("migrates old single outcomeId → outcomeIds array", () => {

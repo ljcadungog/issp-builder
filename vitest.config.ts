@@ -32,11 +32,16 @@ export default defineConfig({
       // 43.05/46.02/52.32/44.21 here. No tests were lost — only the
       // accounting changed. Narrowing `exclude` to the code we can actually
       // reach then brought the same suite to 52.65/50.68/59.50/54.01.
+      //
+      // After merging upstream (schema v10 stakeholder direction, ICT project
+      // numbering) the suite measures 53.42/51.33/60.61/54.72 — every metric
+      // rose, so the floors ratchet up with it. Upstream added no new files
+      // under src/lib, so `exclude` is unchanged.
       thresholds: {
         lines: 54,
-        statements: 52,
-        functions: 59,
-        branches: 50,
+        statements: 53,
+        functions: 60,
+        branches: 51,
       },
     },
   },

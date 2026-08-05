@@ -81,6 +81,38 @@ describe("render — full demo document", () => {
     expect(content).toMatch(/₱|PHP|\d,\d{3}\.\d{2}/);
   });
 
+  it("groups the Part I-C stakeholder table by transaction direction", () => {
+    // Schema v10 tags every service INCOMING or OUTGOING; the demo doc uses both
+    // and leaves none unset, so the UNSPECIFIED group must be omitted entirely
+    // rather than rendered empty.
+    expect(content).toContain("Transaction Processed");
+    expect(content).toContain("INCOMING:");
+    expect(content).toContain("OUTGOING:");
+    expect(content).not.toContain("UNSPECIFIED:");
+  });
+
+  it("gives each stakeholder a rowspan matching its rendered row count", () => {
+    // The name cell spans one label row per direction group plus one row per
+    // service. If that arithmetic drifts, the table overflows its own body.
+    const start = content.indexOf("Transaction Processed");
+    const table = content.slice(start, content.indexOf("</table>", start));
+    const rowspans = [...table.matchAll(/rowspan="(\d+)"/g)].map((m) => Number(m[1]));
+    const bodyRows = table.split("<tr").length - 1;
+    expect(rowspans.length).toBe(loadDemoDoc().part1.stakeholders.length);
+    expect(rowspans.reduce((a, b) => a + b, 0)).toBe(bodyRows);
+  });
+
+  it("numbers ICT projects and omits the empty cross-agency series", () => {
+    const doc = loadDemoDoc();
+    expect(doc.part3.internalProjects.length).toBeGreaterThan(0);
+    expect(doc.part3.crossAgencyProjects).toHaveLength(0);
+    for (let i = 1; i <= doc.part3.internalProjects.length; i++) {
+      expect(content, `internal #${i}`).toContain(`Internal ICT Project #${i}`);
+    }
+    expect(content).not.toContain(`Internal ICT Project #${doc.part3.internalProjects.length + 1}`);
+    expect(content).not.toContain("Cross-Agency ICT Project #");
+  });
+
   it("every TOC entry has a matching anchor in one of the two documents", () => {
     const entries = getTocEntries(issp);
     expect(entries.length).toBeGreaterThan(0);
